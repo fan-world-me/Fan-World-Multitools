@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "multitools",
+  "version": "${version}",
+  "name": "multitools",
+  "description": "Client-side multitool mod for Fabric 1.21.11.",
+  "authors": [
+    "fan_world"
+  ],
+  "license": "GPL-3.0-only",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "fan_world.spearcore.Spearcore"
+    ],
+    "client": [
+      "fan_world.spearcore.SpearcoreClient"
+    ]
+  },
+  "mixins": [
+    "spearcore.mixins.json",
+    {
+      "config": "spearcore.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.2",
+    "minecraft": "1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
