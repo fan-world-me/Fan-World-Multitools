@@ -2,10 +2,13 @@
   "key.multitools.spear_dash": "Spear Dash",
   "key.multitools.pearl_catch": "Pearl Catch",
   "key.multitools.smart_attack": "Smart Attack",
-  "key.multitools.wind_charge_jump": "Wind Charge Jump",
+  "key.multitools.dive_combo": "Dive Combo",
   "key.multitools.firework_boost": "Firework Boost",
   "key.multitools.toggle_elytra_swap": "Toggle Elytra Swap",
   "key.multitools.auto_totem": "Auto Totem",
   "key.multitools.load_main": "Load Main Kit",
+  "key.multitools.settings": "Open Settings",
+  "key.multitools.give_nuke": "Give Nuke",
+  "key.multitools.give_stab": "Give Stab",
   "key.categories.multitools.keybinds": "Multitools"
 }

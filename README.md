@@ -1,56 +1,64 @@
-# Fan World Multitools
+# Fan World Me Multitools
 
-Client-side Fabric mod for Minecraft 1.21.11 with fast combat and movement utility keybinds.
+Client-side Fabric mod for Minecraft `1.21.11` focused on hotbar automation, elytra movement, and mace PvP helpers.
+
+## Keybinds
+
+- `C` - `Spear Dash`: swap to a Lunge spear, hit, then restore the previous slot.
+- `V` - `Pearl Catch`: original pearl follow-up flow from the base project.
+- `Mouse 4` - `Dive Combo`: start or cancel the elytra-mace combo loop.
+- `Mouse 5` - `Smart Attack`: falling attack assist with player-first target priority.
+- `Left Shift` - `Firework Boost`
+- `` ` `` - toggle auto elytra swap
+- `R` - `Auto Totem`
+- `L` - `/ck load main`
+- `F6` - open Multitools settings
+- `F7` - drop held item if needed, then send `/givef nuke 1 16`
+- `F8` - drop held item if needed, then send `/givef stab 1`
 
 ## Features
 
-- Spear Dash: swaps to a Lunge-enchanted spear, attacks, then returns to the previous hotbar slot.
-- Pearl Catch: throws an ender pearl and follows up with a wind charge timing helper.
-- Smart Attack: attacks the best nearby living target while falling.
-- Wind Charge Jump: swaps to a wind charge, uses it with a suitable pitch, then restores the previous slot.
-- Firework Boost: uses fireworks while gliding, including from hotbar or inventory.
-- Elytra Swap: double-jump style elytra equip, landing chestplate restore, and toggle key.
-- Auto Totem: moves a totem from inventory to the offhand.
-- Load Main Kit: sends `/ck load main`.
-- Mace combat helper: handles mace, axe, and sword follow-up swaps around shield interactions.
+- Package and mod id renamed to `fan_world_me.multitools`
+- Old Wind Charge Jump and unfinished bounce logic removed
+- Dive Combo state machine for elytra-mace automation
+- Hidden mace / axe -> mace follow-up swap logic
+- Auto elytra equip and chestplate restore helpers
+- Firework use from offhand, hotbar, or inventory swap
+- Auto Totem offhand swap
+- Simple in-game settings screen for the main toggles
 
 ## Requirements
 
-- Java 21
-- Fabric Loader 0.18.2 or newer
+- Java `21`
+- Fabric Loader `0.18.2+`
 - Fabric API
-- Minecraft 1.21.11
+- Minecraft `1.21.11`
 
 ## Build
-
-Windows:
 
 ```powershell
 .\gradlew.bat build
 ```
 
-Linux/macOS:
+Output jar:
 
-```bash
-./gradlew build
-```
-
-The built mod jar will be in `build/libs/`.
+- `build/libs/multitools-4.0.2.jar`
 
 ## Development
 
-Run a client from the Gradle project:
+Run the client:
 
 ```powershell
 .\gradlew.bat runClient
 ```
 
-Useful files:
+Main sources:
 
-- `src/main/java/fan_world/spearcore/` - Java sources.
-- `src/main/resources/fabric.mod.json` - Fabric mod metadata.
-- `src/main/resources/assets/multitools/lang/en_us.json` - keybind translations.
+- `src/main/java/fan_world_me/multitools/`
+- `src/main/resources/fabric.mod.json`
+- `src/main/resources/assets/multitools/lang/en_us.json`
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 only. See `LICENSE`.
+GPL-3.0-only. See `LICENSE`.
+

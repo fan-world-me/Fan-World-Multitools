@@ -1,4 +1,4 @@
-package fan_world.spearcore;
+package fan_world_me.multitools;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -23,8 +23,7 @@ public final class MaceSwapState {
    private static boolean performingFollowUp = false;
    private static boolean queuedSwordSwap = false;
    private static int queuedTargetId = -1;
-   private static boolean pendingMaceRestore = false;
-   private static int pendingRestoreSlot = -1;
+   private static boolean automationSuppressed = false;
 
    private MaceSwapState() {
    }
@@ -34,7 +33,7 @@ public final class MaceSwapState {
    }
 
    public static boolean onInterceptAttack(MinecraftClient client, ClientPlayerEntity attacker, Entity target) {
-      if (performingFollowUp || client == null || attacker == null || target == null) {
+      if (automationSuppressed || performingFollowUp || client == null || attacker == null || target == null) {
          return false;
       }
 
@@ -98,16 +97,7 @@ public final class MaceSwapState {
    public static void onPostVanillaAttack(MinecraftClient client, ClientPlayerEntity attacker, Entity target) {
       if (performingFollowUp || client == null || attacker == null) {
          clearQueuedSwordSwap();
-         clearPendingMaceRestore();
          return;
-      }
-
-      if (pendingMaceRestore && attacker.getMainHandStack().isOf(Items.MACE)) {
-         int restoreSlot = pendingRestoreSlot;
-         clearPendingMaceRestore();
-         if (restoreSlot >= 0) {
-            setSelectedHotbarSlot(client, attacker, restoreSlot);
-         }
       }
 
       if (!queuedSwordSwap) {
@@ -124,6 +114,32 @@ public final class MaceSwapState {
       if (swordSlot >= 0) {
          setSelectedHotbarSlot(client, attacker, swordSlot);
       }
+   }
+
+   static boolean performDiveAttack(MinecraftClient client, ClientPlayerEntity attacker, LivingEntity target, int restoreSlot) {
+      if (client == null || attacker == null || target == null || client.world == null || client.interactionManager == null) {
+         return false;
+      }
+
+      boolean preferDensity = hasPoweredMaceEffect(attacker);
+      if (isBlockingWithShield(target) && isShieldFacingAttacker(attacker, target)) {
+         int axeSlot = findFirstHotbarSlot(attacker, ItemTags.AXES);
+         int maceSlot = findPreferredMaceInHotbar(attacker, preferDensity);
+         if (axeSlot < 0 || maceSlot < 0) {
+            return false;
+         }
+
+         performShieldBreakMaceCombo(client, target.getId(), axeSlot, maceSlot, restoreSlot);
+         return true;
+      }
+
+      int maceSlot = findPreferredMaceInHotbar(attacker, preferDensity);
+      if (maceSlot < 0) {
+         return false;
+      }
+
+      performTemporaryAttack(client, target.getId(), maceSlot, restoreSlot);
+      return true;
    }
 
    private static void performTemporaryAttack(MinecraftClient client, int targetEntityId, int weaponSlot, int followUpSlot) {
@@ -175,12 +191,18 @@ public final class MaceSwapState {
          client.player.swingHand(Hand.MAIN_HAND);
       } finally {
          setSelectedHotbarSlot(client, client.player, restoreSlot);
-         clearPendingMaceRestore();
          performingFollowUp = false;
       }
    }
 
-   private static void setSelectedHotbarSlot(MinecraftClient client, ClientPlayerEntity player, int slot) {
+   static void setAutomationSuppressed(boolean suppressed) {
+      automationSuppressed = suppressed;
+      if (suppressed) {
+         clearQueuedSwordSwap();
+      }
+   }
+
+   static void setSelectedHotbarSlot(MinecraftClient client, ClientPlayerEntity player, int slot) {
       if (slot < 0 || slot > 8 || player.getInventory().getSelectedSlot() == slot) {
          return;
       }
@@ -191,7 +213,7 @@ public final class MaceSwapState {
       }
    }
 
-   private static int findPreferredMaceInHotbar(ClientPlayerEntity player, boolean preferDensity) {
+   static int findPreferredMaceInHotbar(ClientPlayerEntity player, boolean preferDensity) {
       RegistryEntry<Enchantment> density = player.getRegistryManager()
          .getOrThrow(RegistryKeys.ENCHANTMENT)
          .getOrThrow(Enchantments.DENSITY);
@@ -240,7 +262,7 @@ public final class MaceSwapState {
       return fallbackSlot;
    }
 
-   private static int findFirstHotbarSlot(ClientPlayerEntity player, net.minecraft.registry.tag.TagKey<net.minecraft.item.Item> tag) {
+   static int findFirstHotbarSlot(ClientPlayerEntity player, net.minecraft.registry.tag.TagKey<net.minecraft.item.Item> tag) {
       for (int slot = 0; slot < 9; ++slot) {
          ItemStack stack = player.getInventory().getStack(slot);
          if (!stack.isEmpty() && stack.isIn(tag)) {
@@ -251,7 +273,7 @@ public final class MaceSwapState {
       return -1;
    }
 
-   private static boolean isBlockingWithShield(LivingEntity target) {
+   static boolean isBlockingWithShield(LivingEntity target) {
       if (!target.isUsingItem()) {
          return false;
       }
@@ -260,7 +282,7 @@ public final class MaceSwapState {
       return !active.isEmpty() && active.isOf(Items.SHIELD);
    }
 
-   private static boolean isShieldFacingAttacker(ClientPlayerEntity attacker, LivingEntity target) {
+   static boolean isShieldFacingAttacker(ClientPlayerEntity attacker, LivingEntity target) {
       Vec3d toAttacker = new Vec3d(
          attacker.getX() - target.getX(),
          attacker.getY() - target.getY(),
@@ -288,18 +310,8 @@ public final class MaceSwapState {
       return !player.isOnGround() && player.getVelocity().y < 0.0D && player.fallDistance > DENSITY_PRIORITY_FALL_DISTANCE;
    }
 
-   private static void queueMaceRestore(int slot) {
-      pendingMaceRestore = slot >= 0;
-      pendingRestoreSlot = slot;
-   }
-
    private static void clearQueuedSwordSwap() {
       queuedSwordSwap = false;
       queuedTargetId = -1;
-   }
-
-   private static void clearPendingMaceRestore() {
-      pendingMaceRestore = false;
-      pendingRestoreSlot = -1;
    }
 }

@@ -1,4 +1,4 @@
-package fan_world.spearcore;
+package fan_world_me.multitools;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
@@ -8,53 +8,49 @@ import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ItemEnchantmentsComponent;
 import net.minecraft.component.type.EquippableComponent;
+import net.minecraft.component.type.ItemEnchantmentsComponent;
 import net.minecraft.enchantment.Enchantment;
 import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.decoration.EndCrystalEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
-import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
-import net.minecraft.particle.ParticleTypes;
-import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
+import net.minecraft.util.Hand;
+import net.minecraft.util.ActionResult;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
-import fan_world.spearcore.mixin.client.forceAttack;
+import fan_world_me.multitools.mixin.client.ForceAttack;
 
 @Environment(EnvType.CLIENT)
-public class SpearcoreClient implements ClientModInitializer {
-   private static final int ELYTRA_DOUBLE_JUMP_WINDOW_TICKS = 7;
-   private static final int ELYTRA_BOUNCE_PRESERVE_TICKS = 14;
+public class MultitoolsClient implements ClientModInitializer {
    private static final int ELYTRA_LANDING_SWAP_DELAY_TICKS = 5;
    private static final int SPEAR_KEY_COOLDOWN_TICKS = 8;
    private static final int SPEAR_SWAP_BACK_DELAY_TICKS = 2;
    private static final int PEARL_CATCH_AIM_TICKS = 2;
    private static final int PEARL_CATCH_FIRE_TICK = 0;
    private static final int PEARL_CATCH_SWAP_BACK_TICK = -1;
-   private static final int WIND_CHARGE_USE_DELAY_TICKS = 1;
    private static final int PLAYER_CHEST_SLOT = 6;
-   private static final float WIND_CHARGE_SELF_BOOST_PITCH = 88.0F;
-   private static final float WIND_CHARGE_AIR_BOOST_PITCH = 84.0F;
-   private static final float WIND_CHARGE_ELYTRA_BOOST_PITCH = 72.0F;
-   private static final float WIND_CHARGE_ELYTRA_DIVE_THRESHOLD = 28.0F;
-   private static final float ELYTRA_DIVE_PITCH_THRESHOLD = 35.0F;
-   private static final double ELYTRA_DIVE_SPEED_THRESHOLD = -0.20D;
    private static final double SMART_ATTACK_RANGE = 4.8D;
    private static final double SMART_ATTACK_VERTICAL_SPEED = -0.45D;
    private static final double SMART_ATTACK_VERTICAL_RANGE = 6.0D;
    private static final double SMART_ATTACK_TARGET_PADDING = 0.9D;
    private static final double SMART_ATTACK_FORWARD_RANGE = 1.5D;
+   private static final double SMART_ATTACK_LOW_HEALTH_BONUS = 2000.0D;
+   private static final double SMART_ATTACK_PLAYER_BONUS = 1000.0D;
+
+   private final DiveComboState diveComboState = new DiveComboState(this);
 
    private int spearBindDelay = 0;
    private int spearSwapBackDelay = -1;
@@ -63,26 +59,26 @@ public class SpearcoreClient implements ClientModInitializer {
    private int pearlCatchDelay = -1;
    private int previousPearlSlot = 0;
    private float pearlPitchStep = 0.0F;
-   private int windChargeUseDelay = -1;
-   private int previousWindChargeSlot = -1;
-   private float previousWindChargePitch = 0.0F;
-   private int elytraJumpWindow = 0;
-   private int elytraBouncePreserveTicks = 0;
+
    private int elytraLandingSwapDelay = -1;
    private boolean lastJumpPressed = false;
    private boolean lastOnGround = true;
-   private boolean elytraSwapEnabled = true;
+   private int pendingCommandDelay = -1;
+   private String pendingCommand = null;
 
    @Override
    public void onInitializeClient() {
-      keyBinding.getSpearDash();
-      keyBinding.getPearlCatch();
-      keyBinding.getSmartAttack();
-      keyBinding.getWindChargeJump();
-      keyBinding.getFireworkBoost();
-      keyBinding.getToggleElytraSwap();
-      keyBinding.getAutoTotem();
-      keyBinding.getLoadMain();
+      ModKeyBindings.getSpearDash();
+      ModKeyBindings.getPearlCatch();
+      ModKeyBindings.getSmartAttack();
+      ModKeyBindings.getDiveCombo();
+      ModKeyBindings.getFireworkBoost();
+      ModKeyBindings.getToggleElytraSwap();
+      ModKeyBindings.getAutoTotem();
+      ModKeyBindings.getLoadMain();
+      ModKeyBindings.getSettings();
+      ModKeyBindings.getGiveNuke();
+      ModKeyBindings.getGiveStab();
 
       UseItemCallback.EVENT.register((player, world, hand) -> {
          if (world.isClient() && player instanceof ClientPlayerEntity clientPlayer) {
@@ -92,46 +88,65 @@ public class SpearcoreClient implements ClientModInitializer {
          return ActionResult.PASS;
       });
 
-      ClientTickEvents.START_CLIENT_TICK.register((client) -> {
+      ClientTickEvents.START_CLIENT_TICK.register(client -> {
          if (client.player == null || client.world == null) {
+            this.resetPearlCatchState();
             return;
          }
 
-         while (keyBinding.getAutoTotem().wasPressed()) {
+         if (client.currentScreen != null) {
+            this.diveComboState.cancel(client);
+         }
+
+         while (ModKeyBindings.getAutoTotem().wasPressed()) {
             this.swapTotemToOffhand(client);
          }
 
-         while (keyBinding.getFireworkBoost().wasPressed()) {
+         while (ModKeyBindings.getFireworkBoost().wasPressed()) {
             if (client.player.isGliding()) {
                this.useFirework(client);
             }
          }
 
-         while (keyBinding.getWindChargeJump().wasPressed()) {
-            this.startWindChargeJump(client);
+         while (ModKeyBindings.getPearlCatch().wasPressed()) {
+            this.throwPearl(client);
          }
 
-         while (keyBinding.getLoadMain().wasPressed()) {
+         while (ModKeyBindings.getLoadMain().wasPressed()) {
             this.runLoadMain(client);
          }
 
-         while (keyBinding.getToggleElytraSwap().wasPressed()) {
-            this.elytraSwapEnabled = !this.elytraSwapEnabled;
-            client.player.sendMessage(Text.literal("Elytra Swap: " + (this.elytraSwapEnabled ? "ON" : "OFF")), true);
+         while (ModKeyBindings.getSettings().wasPressed()) {
+            client.setScreen(new MultitoolsSettingsScreen(client.currentScreen));
          }
 
+         while (ModKeyBindings.getGiveNuke().wasPressed()) {
+            this.queueCommand(client, "givef nuke 1 16");
+         }
+
+         while (ModKeyBindings.getGiveStab().wasPressed()) {
+            this.queueCommand(client, "givef stab 1");
+         }
+
+         while (ModKeyBindings.getToggleElytraSwap().wasPressed()) {
+            MultitoolsSettings.elytraSwapEnabled = !MultitoolsSettings.elytraSwapEnabled;
+            client.player.sendMessage(Text.literal("Elytra Swap: " + (MultitoolsSettings.elytraSwapEnabled ? "ON" : "OFF")), true);
+         }
+
+         this.tickQueuedCommand(client);
          this.tickElytraSwap(client);
          this.tickSpearDash(client);
          this.tickPearlCatch(client);
-         this.tickWindChargeJump(client);
+         while (ModKeyBindings.getDiveCombo().wasPressed()) {
+            this.diveComboState.trigger(client);
+         }
+         this.diveComboState.tick(client);
          this.tickSmartAttack(client);
       });
    }
 
    private void tickElytraSwap(MinecraftClient client) {
-      if (!this.elytraSwapEnabled) {
-         this.elytraJumpWindow = 0;
-         this.elytraBouncePreserveTicks = 0;
+      if (!MultitoolsSettings.elytraSwapEnabled) {
          this.elytraLandingSwapDelay = -1;
          this.lastJumpPressed = client.options.jumpKey.isPressed();
          this.lastOnGround = client.player.isOnGround();
@@ -143,26 +158,12 @@ public class SpearcoreClient implements ClientModInitializer {
       boolean jumpPressed = client.options.jumpKey.isPressed();
       boolean gliding = player.isGliding();
 
-      if (this.elytraJumpWindow > 0) {
-         --this.elytraJumpWindow;
-      }
-
-      if (this.elytraBouncePreserveTicks > 0) {
-         --this.elytraBouncePreserveTicks;
-      }
-
       if (this.elytraLandingSwapDelay >= 0) {
          --this.elytraLandingSwapDelay;
-         if (this.elytraLandingSwapDelay <= 0 && onGround && !gliding && this.elytraBouncePreserveTicks <= 0) {
+         if (this.elytraLandingSwapDelay <= 0 && onGround && !gliding) {
             this.equipChestplateOnLanding(client);
             this.elytraLandingSwapDelay = -1;
-         } else if (this.elytraLandingSwapDelay < 0 && onGround && !gliding) {
-            this.elytraLandingSwapDelay = 0;
          }
-      }
-
-      if (gliding && this.shouldPreserveElytraForBounce(player)) {
-         this.elytraBouncePreserveTicks = ELYTRA_BOUNCE_PRESERVE_TICKS;
       }
 
       if (jumpPressed && !this.lastJumpPressed) {
@@ -170,31 +171,20 @@ public class SpearcoreClient implements ClientModInitializer {
             this.equipChestplateFromInventory(client);
          } else if (!onGround && this.canAutoEquipElytra(player)) {
             this.equipElytraFromHotbar(client);
-         } else if (this.elytraJumpWindow > 0 && this.canAutoEquipElytra(player)) {
-            this.equipElytraFromHotbar(client);
-            this.elytraJumpWindow = 0;
-         } else {
-            this.elytraJumpWindow = ELYTRA_DOUBLE_JUMP_WINDOW_TICKS;
          }
       }
 
       if (onGround && !this.lastOnGround) {
          this.elytraLandingSwapDelay = ELYTRA_LANDING_SWAP_DELAY_TICKS;
-         this.elytraJumpWindow = 0;
       } else if (!onGround && this.lastOnGround) {
          this.elytraLandingSwapDelay = -1;
-         this.tryResumeBounceGlide(client);
       }
 
       this.lastJumpPressed = jumpPressed;
       this.lastOnGround = onGround;
    }
 
-   private boolean shouldPreserveElytraForBounce(ClientPlayerEntity player) {
-      return player.getPitch() >= ELYTRA_DIVE_PITCH_THRESHOLD || player.getVelocity().y <= ELYTRA_DIVE_SPEED_THRESHOLD;
-   }
-
-   private boolean canAutoEquipElytra(ClientPlayerEntity player) {
+   boolean canAutoEquipElytra(ClientPlayerEntity player) {
       if (player.isTouchingWater() || player.isSubmergedInWater() || player.isClimbing()) {
          return false;
       }
@@ -206,9 +196,8 @@ public class SpearcoreClient implements ClientModInitializer {
       return !player.isSneaking();
    }
 
-   private void tryResumeBounceGlide(MinecraftClient client) {
-      ClientPlayerEntity player = client.player;
-      if (player == null || player.networkHandler == null || this.elytraBouncePreserveTicks <= 0) {
+   void startFallFlyingIfPossible(ClientPlayerEntity player) {
+      if (player.networkHandler == null) {
          return;
       }
 
@@ -235,7 +224,7 @@ public class SpearcoreClient implements ClientModInitializer {
          }
       }
 
-      while (keyBinding.getSpearDash().wasPressed()) {
+      while (ModKeyBindings.getSpearDash().wasPressed()) {
          if (this.spearBindDelay > 0) {
             continue;
          }
@@ -252,30 +241,36 @@ public class SpearcoreClient implements ClientModInitializer {
    }
 
    private void tickPearlCatch(MinecraftClient client) {
-      while (keyBinding.getPearlCatch().wasPressed()) {
-         this.throwPearl(client);
+      ClientPlayerEntity player = client.player;
+      if (player == null || client.world == null || client.interactionManager == null) {
+         this.resetPearlCatchState();
+         return;
       }
 
       if (this.pearlCatchDelay > 0) {
-         client.player.setPitch(client.player.getPitch() + this.pearlPitchStep);
+         player.setPitch(player.getPitch() + this.pearlPitchStep);
          --this.pearlCatchDelay;
          return;
       }
 
       if (this.pearlCatchDelay == PEARL_CATCH_FIRE_TICK) {
-         this.swapToWindCharge(client.player);
-         client.interactionManager.interactItem(client.player, Hand.MAIN_HAND);
+         if (this.swapToWindCharge(player)) {
+            client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+         }
          --this.pearlCatchDelay;
          return;
       }
 
       if (this.pearlCatchDelay == PEARL_CATCH_SWAP_BACK_TICK) {
+         if (this.previousPearlSlot >= 0) {
+            MaceSwapState.setSelectedHotbarSlot(client, player, this.previousPearlSlot);
+         }
          this.pearlCatchDelay = -2;
       }
    }
 
    private void tickSmartAttack(MinecraftClient client) {
-      if (!keyBinding.getSmartAttack().isPressed()) {
+      if (!ModKeyBindings.getSmartAttack().isPressed()) {
          return;
       }
 
@@ -293,59 +288,18 @@ public class SpearcoreClient implements ClientModInitializer {
       player.swingHand(Hand.MAIN_HAND);
    }
 
-   private void startWindChargeJump(MinecraftClient client) {
-      ClientPlayerEntity player = client.player;
-      if (client.interactionManager == null || player == null) {
-         return;
-      }
-
-      if (this.windChargeUseDelay >= 0) {
-         return;
-      }
-
-      int previousSlot = player.getInventory().getSelectedSlot();
-      if (!this.swapToWindCharge(player)) {
-         return;
-      }
-
-      this.previousWindChargeSlot = previousSlot;
-      this.previousWindChargePitch = player.getPitch();
-      this.windChargeUseDelay = WIND_CHARGE_USE_DELAY_TICKS;
-
-      if (!player.isGliding() && player.isOnGround()) {
-         player.jump();
-      }
-   }
-
-   private void tickWindChargeJump(MinecraftClient client) {
-      if (this.windChargeUseDelay < 0) {
-         return;
-      }
-
-      ClientPlayerEntity player = client.player;
-      if (client.interactionManager == null || player == null) {
-         this.clearWindChargeState();
-         return;
-      }
-
-      --this.windChargeUseDelay;
-      if (this.windChargeUseDelay > 0) {
-         return;
-      }
-
-      player.setPitch(this.getWindChargePitch(player));
-      client.interactionManager.interactItem(player, Hand.MAIN_HAND);
-      player.setPitch(this.previousWindChargePitch);
-
-      if (this.previousWindChargeSlot >= 0) {
-         player.getInventory().setSelectedSlot(this.previousWindChargeSlot);
-      }
-
-      this.clearWindChargeState();
+   private void resetPearlCatchState() {
+      this.pearlCatchDelay = -1;
+      this.previousPearlSlot = 0;
+      this.pearlPitchStep = 0.0F;
    }
 
    private void throwPearl(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
+      if (client.interactionManager == null || player == null) {
+         return;
+      }
+
       this.previousPearlSlot = player.getInventory().getSelectedSlot();
       if (!this.swapToPearl(player)) {
          return;
@@ -374,44 +328,27 @@ public class SpearcoreClient implements ClientModInitializer {
          return 0.0F;
       }
 
-      if (pitch >= -89.0F && pitch <= -66.0F) {
+      if (pitch <= -66.0F) {
          return 2.0F;
       }
 
-      if (pitch > -66.0F && pitch <= -56.0F) {
+      if (pitch <= -56.0F) {
          return 4.0F;
       }
 
-      if (pitch > -56.0F && pitch <= -50.0F) {
+      if (pitch <= -50.0F) {
          return 5.0F;
       }
 
-      if (pitch > -50.0F && pitch <= -30.0F) {
+      if (pitch <= -30.0F) {
          return 8.0F;
       }
 
-      if (pitch > -30.0F && pitch <= -20.0F) {
+      if (pitch <= -20.0F) {
          return 11.0F;
       }
 
       return 2.0F;
-   }
-
-   private float getWindChargePitch(ClientPlayerEntity player) {
-      if (player.isGliding() && (player.getPitch() >= WIND_CHARGE_ELYTRA_DIVE_THRESHOLD || player.getVelocity().y < 0.0D)) {
-         return WIND_CHARGE_ELYTRA_BOOST_PITCH;
-      }
-
-      if (!player.isOnGround()) {
-         return WIND_CHARGE_AIR_BOOST_PITCH;
-      }
-
-      return WIND_CHARGE_SELF_BOOST_PITCH;
-   }
-
-   private void clearWindChargeState() {
-      this.windChargeUseDelay = -1;
-      this.previousWindChargeSlot = -1;
    }
 
    private boolean swapToLungeSpear(ClientPlayerEntity player) {
@@ -438,7 +375,7 @@ public class SpearcoreClient implements ClientModInitializer {
       return false;
    }
 
-   private boolean swapToWindCharge(ClientPlayerEntity player) {
+   boolean swapToWindCharge(ClientPlayerEntity player) {
       for (int slot = 0; slot < 9; ++slot) {
          ItemStack stack = player.getInventory().getStack(slot);
          if (stack.isOf(Items.WIND_CHARGE)) {
@@ -448,6 +385,24 @@ public class SpearcoreClient implements ClientModInitializer {
       }
 
       return false;
+   }
+
+   boolean useWindChargeAtPitch(MinecraftClient client, ClientPlayerEntity player, float pitch) {
+      if (client.interactionManager == null) {
+         return false;
+      }
+
+      int previousSlot = player.getInventory().getSelectedSlot();
+      float previousPitch = player.getPitch();
+      if (!this.swapToWindCharge(player)) {
+         return false;
+      }
+
+      player.setPitch(pitch);
+      client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+      player.setPitch(previousPitch);
+      MaceSwapState.setSelectedHotbarSlot(client, player, previousSlot);
+      return true;
    }
 
    private boolean swapToPearl(ClientPlayerEntity player) {
@@ -507,7 +462,7 @@ public class SpearcoreClient implements ClientModInitializer {
       return inventorySlot < 9 ? 36 + inventorySlot : inventorySlot;
    }
 
-   private void equipElytraFromHotbar(MinecraftClient client) {
+   void equipElytraFromHotbar(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
       if (client.interactionManager == null || player == null) {
          return;
@@ -525,7 +480,7 @@ public class SpearcoreClient implements ClientModInitializer {
       this.swapInventoryItemIntoArmorSlot(client, player, elytraSlot, PLAYER_CHEST_SLOT);
    }
 
-   private void equipChestplateOnLanding(MinecraftClient client) {
+   void equipChestplateOnLanding(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
       if (client.interactionManager == null || player == null) {
          return;
@@ -570,7 +525,7 @@ public class SpearcoreClient implements ClientModInitializer {
       player.networkHandler.sendChatCommand("ck load main");
    }
 
-   private void useFirework(MinecraftClient client) {
+   void useFirework(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
       if (client.interactionManager == null || player == null) {
          return;
@@ -597,10 +552,41 @@ public class SpearcoreClient implements ClientModInitializer {
 
       int syncId = player.playerScreenHandler.syncId;
       int sourceSlot = this.toScreenHandlerSlot(inventorySlot);
-      int targetSlot = this.toScreenHandlerSlot(selectedSlot);
       client.interactionManager.clickSlot(syncId, sourceSlot, selectedSlot, SlotActionType.SWAP, player);
       client.interactionManager.interactItem(player, Hand.MAIN_HAND);
       client.interactionManager.clickSlot(syncId, sourceSlot, selectedSlot, SlotActionType.SWAP, player);
+   }
+
+   private void queueCommand(MinecraftClient client, String command) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || player.networkHandler == null) {
+         return;
+      }
+
+      if (MultitoolsSettings.dropHeldItemBeforeGiveCommand && !player.getMainHandStack().isEmpty()) {
+         player.dropSelectedItem(true);
+         this.pendingCommand = command;
+         this.pendingCommandDelay = 1;
+         return;
+      }
+
+      player.networkHandler.sendChatCommand(command);
+   }
+
+   private void tickQueuedCommand(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || player.networkHandler == null || this.pendingCommand == null) {
+         return;
+      }
+
+      if (this.pendingCommandDelay > 0) {
+         --this.pendingCommandDelay;
+         return;
+      }
+
+      player.networkHandler.sendChatCommand(this.pendingCommand);
+      this.pendingCommand = null;
+      this.pendingCommandDelay = -1;
    }
 
    private void swapInventoryItemIntoArmorSlot(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, int armorSlot) {
@@ -615,7 +601,7 @@ public class SpearcoreClient implements ClientModInitializer {
       }
    }
 
-   private int findHotbarSlot(ClientPlayerEntity player, net.minecraft.item.Item item) {
+   private int findHotbarSlot(ClientPlayerEntity player, Item item) {
       for (int slot = 0; slot < 9; ++slot) {
          if (player.getInventory().getStack(slot).isOf(item)) {
             return slot;
@@ -625,7 +611,7 @@ public class SpearcoreClient implements ClientModInitializer {
       return -1;
    }
 
-   private int findInventorySlot(ClientPlayerEntity player, net.minecraft.item.Item item) {
+   private int findInventorySlot(ClientPlayerEntity player, Item item) {
       for (int slot = 0; slot < 36; ++slot) {
          if (player.getInventory().getStack(slot).isOf(item)) {
             return slot;
@@ -710,6 +696,11 @@ public class SpearcoreClient implements ClientModInitializer {
       double score = distanceScore + alignmentPenalty * SMART_ATTACK_FORWARD_RANGE;
 
       if (entity instanceof PlayerEntity targetPlayer) {
+         score -= SMART_ATTACK_PLAYER_BONUS;
+         if (targetPlayer.getHealth() < 6.0F) {
+            score -= SMART_ATTACK_LOW_HEALTH_BONUS;
+         }
+
          if (targetPlayer.isGliding()) {
             score -= 1.25D;
          }
@@ -722,9 +713,11 @@ public class SpearcoreClient implements ClientModInitializer {
       return score;
    }
 
-   private void simulateHit(MinecraftClient client) {
-      if (client instanceof forceAttack accessor) {
+   void simulateHit(MinecraftClient client) {
+      if (client instanceof ForceAttack accessor) {
          accessor.callDoAttack();
       }
    }
+
 }
+

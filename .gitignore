@@ -7,23 +7,14 @@ bin/
 # Minecraft/Fabric runtime output
 run/
 
-# Local caches and temporary files
-caches/
-daemon/
-native/
-/wrapper/
-.tmp/
-*.log
-
 # IDE
 .idea/
 *.iml
 .vscode/
 
-# Build artifacts and downloaded mods
+# Build artifacts
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
-*.zip
 
 # OS files
 .DS_Store

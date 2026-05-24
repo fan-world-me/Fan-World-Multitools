@@ -1,4 +1,4 @@
-package fan_world.spearcore.mixin.client;
+package fan_world_me.multitools.mixin.client;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -8,7 +8,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Environment(EnvType.CLIENT)
 @Mixin(MinecraftClient.class)
-public interface forceAttack {
+public interface ForceAttack {
    @Invoker("doAttack")
    boolean callDoAttack();
 }

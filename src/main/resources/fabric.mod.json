@@ -5,22 +5,22 @@
   "name": "multitools",
   "description": "Client-side multitool mod for Fabric 1.21.11.",
   "authors": [
-    "fan_world"
+    "fan_world_me"
   ],
   "license": "GPL-3.0-only",
   "environment": "*",
   "entrypoints": {
     "main": [
-      "fan_world.spearcore.Spearcore"
+      "fan_world_me.multitools.Multitools"
     ],
     "client": [
-      "fan_world.spearcore.SpearcoreClient"
+      "fan_world_me.multitools.MultitoolsClient"
     ]
   },
   "mixins": [
-    "spearcore.mixins.json",
+    "multitools.mixins.json",
     {
-      "config": "spearcore.client.mixins.json",
+      "config": "multitools.client.mixins.json",
       "environment": "client"
     }
   ],
@@ -31,3 +31,5 @@
     "fabric-api": "*"
   }
 }
+
+

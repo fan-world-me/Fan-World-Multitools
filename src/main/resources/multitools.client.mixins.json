@@ -1,12 +1,13 @@
 {
   "required": true,
-  "package": "fan_world.spearcore.mixin.client",
+  "package": "fan_world_me.multitools.mixin.client",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "forceAttack",
+    "ForceAttack",
     "ClientPlayerInteractionManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1
   }
 }
+

@@ -6,4 +6,5 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'fan-world-multitools'
+rootProject.name = 'fan-world-me-multitools'
+
