@@ -15,6 +15,9 @@
     ],
     "client": [
       "fan_world_me.multitools.MultitoolsClient"
+    ],
+    "modmenu": [
+      "fan_world_me.multitools.MultitoolsModMenu"
     ]
   },
   "mixins": [

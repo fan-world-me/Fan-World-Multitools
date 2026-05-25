@@ -7,8 +7,11 @@
   "key.multitools.toggle_elytra_swap": "Toggle Elytra Swap",
   "key.multitools.auto_totem": "Auto Totem",
   "key.multitools.load_main": "Load Main Kit",
-  "key.multitools.settings": "Open Settings",
+  "key.multitools.settings": "Give Railgun",
   "key.multitools.give_nuke": "Give Nuke",
   "key.multitools.give_stab": "Give Stab",
+  "key.multitools.self_buffs": "Self Buffs",
+  "key.multitools.saturation": "Saturation",
+  "key.multitools.kill_non_players": "Kill Non Players",
   "key.categories.multitools.keybinds": "Multitools"
 }

@@ -12,9 +12,12 @@ Client-side Fabric mod for Minecraft `1.21.11` focused on hotbar automation, ely
 - `` ` `` - toggle auto elytra swap
 - `R` - `Auto Totem`
 - `L` - `/ck load main`
-- `F6` - open Multitools settings
-- `F7` - drop held item if needed, then send `/givef nuke 1 16`
+- `F6` - drop/move held item if needed, then send `/givef railgun straight 1`
+- `F7` - drop/move held item if needed, then send `/givef nuke 1 11`
 - `F8` - drop held item if needed, then send `/givef stab 1`
+- `F9` - throw self-buff splash potions downward
+- `F10` - `/effect give @p minecraft:saturation infinite 255 false`
+- `F12` - `/kill @e[type=!minecraft:player]`
 
 ## Features
 
@@ -25,7 +28,7 @@ Client-side Fabric mod for Minecraft `1.21.11` focused on hotbar automation, ely
 - Auto elytra equip and chestplate restore helpers
 - Firework use from offhand, hotbar, or inventory swap
 - Auto Totem offhand swap
-- Simple in-game settings screen for the main toggles
+- Mod Menu config screen for the main toggles
 
 ## Requirements
 
@@ -42,7 +45,7 @@ Client-side Fabric mod for Minecraft `1.21.11` focused on hotbar automation, ely
 
 Output jar:
 
-- `build/libs/multitools-4.0.2.jar`
+- `build/libs/multitools-5.0.0.jar`
 
 ## Development
 

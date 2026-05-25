@@ -55,6 +55,18 @@ public class ModKeyBindings {
       new net.minecraft.client.option.KeyBinding("key.multitools.give_stab", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F8, CATEGORY)
    );
 
+   public static final net.minecraft.client.option.KeyBinding SELF_BUFFS = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.self_buffs", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F9, CATEGORY)
+   );
+
+   public static final net.minecraft.client.option.KeyBinding SATURATION = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.saturation", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F10, CATEGORY)
+   );
+
+   public static final net.minecraft.client.option.KeyBinding KILL_NON_PLAYERS = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.kill_non_players", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F12, CATEGORY)
+   );
+
    public static net.minecraft.client.option.KeyBinding getSpearDash() {
       return SPEAR_DASH;
    }
@@ -97,6 +109,18 @@ public class ModKeyBindings {
 
    public static net.minecraft.client.option.KeyBinding getGiveStab() {
       return GIVE_STAB;
+   }
+
+   public static net.minecraft.client.option.KeyBinding getSelfBuffs() {
+      return SELF_BUFFS;
+   }
+
+   public static net.minecraft.client.option.KeyBinding getSaturation() {
+      return SATURATION;
+   }
+
+   public static net.minecraft.client.option.KeyBinding getKillNonPlayers() {
+      return KILL_NON_PLAYERS;
    }
 }
 

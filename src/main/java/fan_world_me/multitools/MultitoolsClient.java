@@ -23,6 +23,7 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.potion.Potions;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.screen.slot.SlotActionType;
@@ -31,17 +32,26 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.component.type.PotionContentsComponent;
+
+import java.util.ArrayDeque;
+import java.util.Optional;
 import fan_world_me.multitools.mixin.client.ForceAttack;
 
 @Environment(EnvType.CLIENT)
 public class MultitoolsClient implements ClientModInitializer {
    private static final int ELYTRA_LANDING_SWAP_DELAY_TICKS = 5;
+   private static final int ELYTRA_BOUNCE_PRESERVE_TICKS = 14;
    private static final int SPEAR_KEY_COOLDOWN_TICKS = 8;
    private static final int SPEAR_SWAP_BACK_DELAY_TICKS = 2;
    private static final int PEARL_CATCH_AIM_TICKS = 2;
    private static final int PEARL_CATCH_FIRE_TICK = 0;
    private static final int PEARL_CATCH_SWAP_BACK_TICK = -1;
+   private static final int SUPPORT_POTION_REUSE_TICKS = 1;
    private static final int PLAYER_CHEST_SLOT = 6;
+   private static final float SUPPORT_POTION_PITCH = 88.0F;
+   private static final float WIND_CHARGE_ELYTRA_DIVE_THRESHOLD = 28.0F;
+   private static final float ELYTRA_DIVE_PITCH_THRESHOLD = 35.0F;
    private static final double SMART_ATTACK_RANGE = 4.8D;
    private static final double SMART_ATTACK_VERTICAL_SPEED = -0.45D;
    private static final double SMART_ATTACK_VERTICAL_RANGE = 6.0D;
@@ -49,8 +59,10 @@ public class MultitoolsClient implements ClientModInitializer {
    private static final double SMART_ATTACK_FORWARD_RANGE = 1.5D;
    private static final double SMART_ATTACK_LOW_HEALTH_BONUS = 2000.0D;
    private static final double SMART_ATTACK_PLAYER_BONUS = 1000.0D;
+   private static final double ELYTRA_DIVE_SPEED_THRESHOLD = -0.20D;
 
    private final DiveComboState diveComboState = new DiveComboState(this);
+   private final ArrayDeque<Integer> pendingSupportPotionSlots = new ArrayDeque<>();
 
    private int spearBindDelay = 0;
    private int spearSwapBackDelay = -1;
@@ -60,6 +72,8 @@ public class MultitoolsClient implements ClientModInitializer {
    private int previousPearlSlot = 0;
    private float pearlPitchStep = 0.0F;
 
+   private int supportPotionDelay = 0;
+   private int elytraBouncePreserveTicks = 0;
    private int elytraLandingSwapDelay = -1;
    private boolean lastJumpPressed = false;
    private boolean lastOnGround = true;
@@ -79,6 +93,9 @@ public class MultitoolsClient implements ClientModInitializer {
       ModKeyBindings.getSettings();
       ModKeyBindings.getGiveNuke();
       ModKeyBindings.getGiveStab();
+      ModKeyBindings.getSelfBuffs();
+      ModKeyBindings.getSaturation();
+      ModKeyBindings.getKillNonPlayers();
 
       UseItemCallback.EVENT.register((player, world, hand) -> {
          if (world.isClient() && player instanceof ClientPlayerEntity clientPlayer) {
@@ -117,15 +134,27 @@ public class MultitoolsClient implements ClientModInitializer {
          }
 
          while (ModKeyBindings.getSettings().wasPressed()) {
-            client.setScreen(new MultitoolsSettingsScreen(client.currentScreen));
+            this.queueCommand(client, "givef railgun straight 1");
          }
 
          while (ModKeyBindings.getGiveNuke().wasPressed()) {
-            this.queueCommand(client, "givef nuke 1 16");
+            this.queueCommand(client, "givef nuke 1 11");
          }
 
          while (ModKeyBindings.getGiveStab().wasPressed()) {
             this.queueCommand(client, "givef stab 1");
+         }
+
+         while (ModKeyBindings.getSelfBuffs().wasPressed()) {
+            this.queueSelfBuffPotions(client);
+         }
+
+         while (ModKeyBindings.getSaturation().wasPressed()) {
+            client.player.networkHandler.sendChatCommand("effect give @p minecraft:saturation infinite 255 false");
+         }
+
+         while (ModKeyBindings.getKillNonPlayers().wasPressed()) {
+            client.player.networkHandler.sendChatCommand("kill @e[type=!minecraft:player]");
          }
 
          while (ModKeyBindings.getToggleElytraSwap().wasPressed()) {
@@ -134,6 +163,7 @@ public class MultitoolsClient implements ClientModInitializer {
          }
 
          this.tickQueuedCommand(client);
+         this.tickSupportPotions(client);
          this.tickElytraSwap(client);
          this.tickSpearDash(client);
          this.tickPearlCatch(client);
@@ -147,6 +177,7 @@ public class MultitoolsClient implements ClientModInitializer {
 
    private void tickElytraSwap(MinecraftClient client) {
       if (!MultitoolsSettings.elytraSwapEnabled) {
+         this.elytraBouncePreserveTicks = 0;
          this.elytraLandingSwapDelay = -1;
          this.lastJumpPressed = client.options.jumpKey.isPressed();
          this.lastOnGround = client.player.isOnGround();
@@ -158,12 +189,20 @@ public class MultitoolsClient implements ClientModInitializer {
       boolean jumpPressed = client.options.jumpKey.isPressed();
       boolean gliding = player.isGliding();
 
+      if (this.elytraBouncePreserveTicks > 0) {
+         --this.elytraBouncePreserveTicks;
+      }
+
       if (this.elytraLandingSwapDelay >= 0) {
          --this.elytraLandingSwapDelay;
-         if (this.elytraLandingSwapDelay <= 0 && onGround && !gliding) {
+         if (this.elytraLandingSwapDelay <= 0 && onGround && !gliding && this.elytraBouncePreserveTicks <= 0) {
             this.equipChestplateOnLanding(client);
             this.elytraLandingSwapDelay = -1;
          }
+      }
+
+      if (gliding && this.shouldPreserveElytraForBounce(player)) {
+         this.elytraBouncePreserveTicks = ELYTRA_BOUNCE_PRESERVE_TICKS;
       }
 
       if (jumpPressed && !this.lastJumpPressed) {
@@ -178,6 +217,7 @@ public class MultitoolsClient implements ClientModInitializer {
          this.elytraLandingSwapDelay = ELYTRA_LANDING_SWAP_DELAY_TICKS;
       } else if (!onGround && this.lastOnGround) {
          this.elytraLandingSwapDelay = -1;
+         this.tryResumeBounceGlide(client);
       }
 
       this.lastJumpPressed = jumpPressed;
@@ -194,6 +234,19 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       return !player.isSneaking();
+   }
+
+   private boolean shouldPreserveElytraForBounce(ClientPlayerEntity player) {
+      return player.getPitch() >= ELYTRA_DIVE_PITCH_THRESHOLD || player.getVelocity().y <= ELYTRA_DIVE_SPEED_THRESHOLD;
+   }
+
+   private void tryResumeBounceGlide(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || this.elytraBouncePreserveTicks <= 0) {
+         return;
+      }
+
+      this.startFallFlyingIfPossible(player);
    }
 
    void startFallFlyingIfPossible(ClientPlayerEntity player) {
@@ -244,6 +297,8 @@ public class MultitoolsClient implements ClientModInitializer {
       ClientPlayerEntity player = client.player;
       if (player == null || client.world == null || client.interactionManager == null) {
          this.resetPearlCatchState();
+         this.pendingCommand = null;
+         this.pendingCommandDelay = -1;
          return;
       }
 
@@ -373,6 +428,87 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       return false;
+   }
+
+   private void queueSelfBuffPotions(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || client.interactionManager == null) {
+         return;
+      }
+
+      this.pendingSupportPotionSlots.clear();
+      this.supportPotionDelay = 0;
+      this.enqueueBestSplashPotion(player, Potions.FIRE_RESISTANCE, Potions.LONG_FIRE_RESISTANCE);
+      this.enqueueBestSplashPotion(player, Potions.STRONG_STRENGTH, Potions.STRENGTH, Potions.LONG_STRENGTH);
+      this.enqueueBestSplashPotion(player, Potions.STRONG_SWIFTNESS, Potions.SWIFTNESS, Potions.LONG_SWIFTNESS);
+      this.enqueueBestSplashPotion(player, Potions.STRONG_REGENERATION, Potions.REGENERATION, Potions.LONG_REGENERATION);
+   }
+
+   private void enqueueBestSplashPotion(ClientPlayerEntity player, RegistryEntry<net.minecraft.potion.Potion>... preferredPotions) {
+      int bestSlot = -1;
+      int bestRank = Integer.MAX_VALUE;
+
+      for (int slot = 0; slot < 36; ++slot) {
+         ItemStack stack = player.getInventory().getStack(slot);
+         if (!stack.isOf(Items.SPLASH_POTION)) {
+            continue;
+         }
+
+         PotionContentsComponent potionContents = stack.get(DataComponentTypes.POTION_CONTENTS);
+         if (potionContents == null) {
+            continue;
+         }
+
+         Optional<RegistryEntry<net.minecraft.potion.Potion>> potion = potionContents.potion();
+         if (potion.isEmpty()) {
+            continue;
+         }
+
+         for (int rank = 0; rank < preferredPotions.length; ++rank) {
+            if (potion.get().matchesKey(preferredPotions[rank].getKey().orElseThrow())) {
+               if (rank < bestRank) {
+                  bestRank = rank;
+                  bestSlot = slot;
+               }
+               break;
+            }
+         }
+      }
+
+      if (bestSlot >= 0) {
+         this.pendingSupportPotionSlots.add(bestSlot);
+      }
+   }
+
+   private void tickSupportPotions(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || client.interactionManager == null) {
+         this.pendingSupportPotionSlots.clear();
+         this.supportPotionDelay = 0;
+         return;
+      }
+
+      if (this.supportPotionDelay > 0) {
+         --this.supportPotionDelay;
+         return;
+      }
+
+      Integer slot = this.pendingSupportPotionSlots.poll();
+      if (slot == null) {
+         return;
+      }
+
+      if (slot < 0 || slot >= 36) {
+         return;
+      }
+
+      ItemStack stack = player.getInventory().getStack(slot);
+      if (!stack.isOf(Items.SPLASH_POTION)) {
+         return;
+      }
+
+      this.useInventoryItemAtPitch(client, player, slot, SUPPORT_POTION_PITCH);
+      this.supportPotionDelay = SUPPORT_POTION_REUSE_TICKS;
    }
 
    boolean swapToWindCharge(ClientPlayerEntity player) {
@@ -564,6 +700,18 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       if (MultitoolsSettings.dropHeldItemBeforeGiveCommand && !player.getMainHandStack().isEmpty()) {
+         if (this.findFirstEmptyHotbarSlot(player) >= 0) {
+            player.networkHandler.sendChatCommand(command);
+            return;
+         }
+
+         int emptyInventorySlot = this.findFirstEmptyInventorySlot(player);
+         if (emptyInventorySlot >= 9 && this.swapSelectedHotbarStackIntoInventory(client, player, emptyInventorySlot)) {
+            this.pendingCommand = command;
+            this.pendingCommandDelay = 1;
+            return;
+         }
+
          player.dropSelectedItem(true);
          this.pendingCommand = command;
          this.pendingCommandDelay = 1;
@@ -619,6 +767,60 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       return -1;
+   }
+
+   private int findFirstEmptyHotbarSlot(ClientPlayerEntity player) {
+      for (int slot = 0; slot < 9; ++slot) {
+         if (player.getInventory().getStack(slot).isEmpty()) {
+            return slot;
+         }
+      }
+
+      return -1;
+   }
+
+   private int findFirstEmptyInventorySlot(ClientPlayerEntity player) {
+      for (int slot = 9; slot < 36; ++slot) {
+         if (player.getInventory().getStack(slot).isEmpty()) {
+            return slot;
+         }
+      }
+
+      return -1;
+   }
+
+   private boolean swapSelectedHotbarStackIntoInventory(MinecraftClient client, ClientPlayerEntity player, int inventorySlot) {
+      if (client.interactionManager == null || !player.playerScreenHandler.getCursorStack().isEmpty()) {
+         return false;
+      }
+
+      int selectedSlot = player.getInventory().getSelectedSlot();
+      int targetSlot = this.toScreenHandlerSlot(inventorySlot);
+      int syncId = player.playerScreenHandler.syncId;
+      client.interactionManager.clickSlot(syncId, targetSlot, selectedSlot, SlotActionType.SWAP, player);
+      return true;
+   }
+
+   private void useInventoryItemAtPitch(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, float pitch) {
+      int selectedSlot = player.getInventory().getSelectedSlot();
+      float previousPitch = player.getPitch();
+
+      if (inventorySlot < 9) {
+         MaceSwapState.setSelectedHotbarSlot(client, player, inventorySlot);
+         player.setPitch(pitch);
+         client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+         player.setPitch(previousPitch);
+         MaceSwapState.setSelectedHotbarSlot(client, player, selectedSlot);
+         return;
+      }
+
+      int syncId = player.playerScreenHandler.syncId;
+      int sourceSlot = this.toScreenHandlerSlot(inventorySlot);
+      client.interactionManager.clickSlot(syncId, sourceSlot, selectedSlot, SlotActionType.SWAP, player);
+      player.setPitch(pitch);
+      client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+      player.setPitch(previousPitch);
+      client.interactionManager.clickSlot(syncId, sourceSlot, selectedSlot, SlotActionType.SWAP, player);
    }
 
    private int findChestplateInventorySlot(ClientPlayerEntity player) {
