@@ -31,6 +31,7 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -133,6 +134,9 @@ public class MultitoolsClient implements ClientModInitializer {
          }
 
          while (ModKeyBindings.getAutoTotem().wasPressed()) {
+            MultitoolsSettings.autoTotemEnabled = !MultitoolsSettings.autoTotemEnabled;
+            MultitoolsSettings.save();
+            client.player.sendMessage(Text.literal("Auto Totem: " + (MultitoolsSettings.autoTotemEnabled ? "ON" : "OFF")), true);
             if (MultitoolsSettings.autoTotemEnabled) {
                this.swapTotemToOffhand(client);
             }
@@ -202,6 +206,7 @@ public class MultitoolsClient implements ClientModInitializer {
 
          this.tickQueuedCommand(client);
          this.tickSupportPotions(client);
+         this.tickAutoTotem(client);
          this.tickElytraThreatSwap(client);
          this.tickElytraSwap(client);
          this.tickSpearDash(client);
@@ -404,7 +409,12 @@ public class MultitoolsClient implements ClientModInitializer {
 
       if (this.pearlCatchDelay == PEARL_CATCH_FIRE_TICK) {
          if (this.swapToWindCharge(player)) {
-            client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+            this.suppressManualWindChargeIntercept = true;
+            try {
+               client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+            } finally {
+               this.suppressManualWindChargeIntercept = false;
+            }
          }
          --this.pearlCatchDelay;
          return;
@@ -500,6 +510,10 @@ public class MultitoolsClient implements ClientModInitializer {
          return ActionResult.PASS;
       }
 
+      if (client.crosshairTarget == null || client.crosshairTarget.getType() != HitResult.Type.BLOCK) {
+         return ActionResult.PASS;
+      }
+
       float previousPitch = player.getPitch();
       float adjustedPitch = this.computeManualWindChargePitch(player);
       this.suppressManualWindChargeIntercept = true;
@@ -515,6 +529,17 @@ public class MultitoolsClient implements ClientModInitializer {
       this.restoreElytraAfterThreat = false;
       this.restoreGlideAfterThreat = false;
       return ActionResult.SUCCESS;
+   }
+
+   private void tickAutoTotem(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (!MultitoolsSettings.autoTotemEnabled || player == null) {
+         return;
+      }
+
+      if (!player.getOffHandStack().isOf(Items.TOTEM_OF_UNDYING)) {
+         this.swapTotemToOffhand(client);
+      }
    }
 
    private float computePearlPitchStep(float pitch) {
@@ -673,9 +698,14 @@ public class MultitoolsClient implements ClientModInitializer {
          return false;
       }
 
-      player.setPitch(pitch);
-      client.interactionManager.interactItem(player, Hand.MAIN_HAND);
-      player.setPitch(previousPitch);
+      this.suppressManualWindChargeIntercept = true;
+      try {
+         player.setPitch(pitch);
+         client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+      } finally {
+         player.setPitch(previousPitch);
+         this.suppressManualWindChargeIntercept = false;
+      }
       MaceSwapState.setSelectedHotbarSlot(client, player, previousSlot);
       return true;
    }
