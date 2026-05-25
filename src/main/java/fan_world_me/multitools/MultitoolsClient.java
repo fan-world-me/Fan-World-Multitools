@@ -15,6 +15,7 @@ import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.TntEntity;
 import net.minecraft.entity.decoration.EndCrystalEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
@@ -31,7 +32,9 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.RaycastContext;
 import net.minecraft.component.type.PotionContentsComponent;
 
 import java.util.ArrayDeque;
@@ -40,18 +43,14 @@ import fan_world_me.multitools.mixin.client.ForceAttack;
 
 @Environment(EnvType.CLIENT)
 public class MultitoolsClient implements ClientModInitializer {
-   private static final int ELYTRA_LANDING_SWAP_DELAY_TICKS = 5;
    private static final int ELYTRA_BOUNCE_PRESERVE_TICKS = 14;
-   private static final int SPEAR_KEY_COOLDOWN_TICKS = 8;
-   private static final int SPEAR_SWAP_BACK_DELAY_TICKS = 2;
-   private static final int PEARL_CATCH_AIM_TICKS = 2;
    private static final int PEARL_CATCH_FIRE_TICK = 0;
    private static final int PEARL_CATCH_SWAP_BACK_TICK = -1;
-   private static final int SUPPORT_POTION_REUSE_TICKS = 1;
    private static final int PLAYER_CHEST_SLOT = 6;
    private static final float SUPPORT_POTION_PITCH = 88.0F;
    private static final float WIND_CHARGE_ELYTRA_DIVE_THRESHOLD = 28.0F;
-   private static final float ELYTRA_DIVE_PITCH_THRESHOLD = 35.0F;
+   private static final float MIN_SELF_WIND_CHARGE_PITCH = 68.0F;
+   private static final float MAX_SELF_WIND_CHARGE_PITCH = 88.0F;
    private static final double SMART_ATTACK_RANGE = 4.8D;
    private static final double SMART_ATTACK_VERTICAL_SPEED = -0.45D;
    private static final double SMART_ATTACK_VERTICAL_RANGE = 6.0D;
@@ -59,7 +58,14 @@ public class MultitoolsClient implements ClientModInitializer {
    private static final double SMART_ATTACK_FORWARD_RANGE = 1.5D;
    private static final double SMART_ATTACK_LOW_HEALTH_BONUS = 2000.0D;
    private static final double SMART_ATTACK_PLAYER_BONUS = 1000.0D;
-   private static final double ELYTRA_DIVE_SPEED_THRESHOLD = -0.20D;
+   private static final int ELYTRA_THREAT_HOLD_TICKS = 6;
+   private static final double CRYSTAL_GROUNDED_THREAT_RANGE = 3.25D;
+   private static final double CRYSTAL_AIR_THREAT_RANGE = 5.0D;
+   private static final double TNT_THREAT_RANGE = 7.0D;
+   private static final int TNT_MAX_THREAT_FUSE = 16;
+   private static final double MACE_THREAT_HORIZONTAL_RANGE = 3.4D;
+   private static final double MACE_THREAT_VERTICAL_RANGE = 7.5D;
+   private static final double MACE_THREAT_DESCENT_SPEED = -0.55D;
 
    private final DiveComboState diveComboState = new DiveComboState(this);
    private final ArrayDeque<Integer> pendingSupportPotionSlots = new ArrayDeque<>();
@@ -79,9 +85,14 @@ public class MultitoolsClient implements ClientModInitializer {
    private boolean lastOnGround = true;
    private int pendingCommandDelay = -1;
    private String pendingCommand = null;
+   private int elytraThreatHoldTicks = 0;
+   private boolean restoreElytraAfterThreat = false;
+   private boolean restoreGlideAfterThreat = false;
+   private boolean suppressManualWindChargeIntercept = false;
 
    @Override
    public void onInitializeClient() {
+      MultitoolsSettings.load();
       ModKeyBindings.getSpearDash();
       ModKeyBindings.getPearlCatch();
       ModKeyBindings.getSmartAttack();
@@ -96,9 +107,15 @@ public class MultitoolsClient implements ClientModInitializer {
       ModKeyBindings.getSelfBuffs();
       ModKeyBindings.getSaturation();
       ModKeyBindings.getKillNonPlayers();
+      MultitoolsSettings.applyKeybindings();
 
       UseItemCallback.EVENT.register((player, world, hand) -> {
          if (world.isClient() && player instanceof ClientPlayerEntity clientPlayer) {
+            ActionResult manualWindChargeResult = this.handleManualWindChargeUse(clientPlayer, hand);
+            if (manualWindChargeResult != ActionResult.PASS) {
+               return manualWindChargeResult;
+            }
+
             this.handlePearlUse(clientPlayer, hand);
          }
 
@@ -116,59 +133,83 @@ public class MultitoolsClient implements ClientModInitializer {
          }
 
          while (ModKeyBindings.getAutoTotem().wasPressed()) {
-            this.swapTotemToOffhand(client);
+            if (MultitoolsSettings.autoTotemEnabled) {
+               this.swapTotemToOffhand(client);
+            }
          }
 
          while (ModKeyBindings.getFireworkBoost().wasPressed()) {
-            if (client.player.isGliding()) {
+            if (MultitoolsSettings.fireworkBoostEnabled && client.player.isGliding()) {
                this.useFirework(client);
             }
          }
 
          while (ModKeyBindings.getPearlCatch().wasPressed()) {
-            this.throwPearl(client);
+            if (MultitoolsSettings.pearlCatchEnabled) {
+               this.throwPearl(client);
+            }
          }
 
          while (ModKeyBindings.getLoadMain().wasPressed()) {
-            this.runLoadMain(client);
+            if (MultitoolsSettings.loadMainEnabled) {
+               this.runLoadMain(client);
+            }
          }
 
          while (ModKeyBindings.getSettings().wasPressed()) {
-            this.queueCommand(client, "givef railgun straight 1");
+            if (MultitoolsSettings.railgunEnabled) {
+               this.queueCommand(client, "givef railgun straight 1");
+            }
          }
 
          while (ModKeyBindings.getGiveNuke().wasPressed()) {
-            this.queueCommand(client, "givef nuke 1 11");
+            if (MultitoolsSettings.nukeEnabled) {
+               this.queueCommand(client, "givef nuke 1 11");
+            }
          }
 
          while (ModKeyBindings.getGiveStab().wasPressed()) {
-            this.queueCommand(client, "givef stab 1");
+            if (MultitoolsSettings.stabEnabled) {
+               this.queueCommand(client, "givef stab 1");
+            }
          }
 
          while (ModKeyBindings.getSelfBuffs().wasPressed()) {
-            this.queueSelfBuffPotions(client);
+            if (MultitoolsSettings.selfBuffsEnabled) {
+               this.queueSelfBuffPotions(client);
+            }
          }
 
          while (ModKeyBindings.getSaturation().wasPressed()) {
-            client.player.networkHandler.sendChatCommand("effect give @p minecraft:saturation infinite 255 false");
+            if (MultitoolsSettings.saturationEnabled) {
+               client.player.networkHandler.sendChatCommand("effect give @p minecraft:saturation infinite 255 false");
+            }
          }
 
          while (ModKeyBindings.getKillNonPlayers().wasPressed()) {
-            client.player.networkHandler.sendChatCommand("kill @e[type=!minecraft:player]");
+            if (MultitoolsSettings.killNonPlayersEnabled) {
+               client.player.networkHandler.sendChatCommand("kill @e[type=!minecraft:player]");
+            }
          }
 
          while (ModKeyBindings.getToggleElytraSwap().wasPressed()) {
-            MultitoolsSettings.elytraSwapEnabled = !MultitoolsSettings.elytraSwapEnabled;
-            client.player.sendMessage(Text.literal("Elytra Swap: " + (MultitoolsSettings.elytraSwapEnabled ? "ON" : "OFF")), true);
+            if (MultitoolsSettings.elytraSwapFeatureEnabled) {
+               MultitoolsSettings.elytraSwapEnabled = !MultitoolsSettings.elytraSwapEnabled;
+               MultitoolsSettings.save();
+               client.player.sendMessage(Text.literal("Elytra Swap: " + (MultitoolsSettings.elytraSwapEnabled ? "ON" : "OFF")), true);
+            }
          }
 
          this.tickQueuedCommand(client);
          this.tickSupportPotions(client);
+         this.tickElytraThreatSwap(client);
          this.tickElytraSwap(client);
          this.tickSpearDash(client);
          this.tickPearlCatch(client);
          while (ModKeyBindings.getDiveCombo().wasPressed()) {
-            this.diveComboState.trigger(client);
+            if (MultitoolsSettings.diveComboEnabled) {
+               this.diveComboState.trigger(client);
+            }
          }
          this.diveComboState.tick(client);
          this.tickSmartAttack(client);
@@ -176,9 +217,12 @@ public class MultitoolsClient implements ClientModInitializer {
    }
 
    private void tickElytraSwap(MinecraftClient client) {
-      if (!MultitoolsSettings.elytraSwapEnabled) {
+      if (!MultitoolsSettings.elytraSwapFeatureEnabled || !MultitoolsSettings.elytraSwapEnabled) {
          this.elytraBouncePreserveTicks = 0;
          this.elytraLandingSwapDelay = -1;
+         this.elytraThreatHoldTicks = 0;
+         this.restoreElytraAfterThreat = false;
+         this.restoreGlideAfterThreat = false;
          this.lastJumpPressed = client.options.jumpKey.isPressed();
          this.lastOnGround = client.player.isOnGround();
          return;
@@ -201,10 +245,6 @@ public class MultitoolsClient implements ClientModInitializer {
          }
       }
 
-      if (gliding && this.shouldPreserveElytraForBounce(player)) {
-         this.elytraBouncePreserveTicks = ELYTRA_BOUNCE_PRESERVE_TICKS;
-      }
-
       if (jumpPressed && !this.lastJumpPressed) {
          if (gliding) {
             this.equipChestplateFromInventory(client);
@@ -214,7 +254,12 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       if (onGround && !this.lastOnGround) {
-         this.elytraLandingSwapDelay = ELYTRA_LANDING_SWAP_DELAY_TICKS;
+         if (!gliding && this.elytraBouncePreserveTicks <= 0) {
+            this.equipChestplateOnLanding(client);
+            this.elytraLandingSwapDelay = -1;
+         } else {
+            this.elytraLandingSwapDelay = MultitoolsSettings.elytraLandingSwapDelayTicks;
+         }
       } else if (!onGround && this.lastOnGround) {
          this.elytraLandingSwapDelay = -1;
          this.tryResumeBounceGlide(client);
@@ -222,6 +267,55 @@ public class MultitoolsClient implements ClientModInitializer {
 
       this.lastJumpPressed = jumpPressed;
       this.lastOnGround = onGround;
+   }
+
+   private void tickElytraThreatSwap(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || client.world == null || client.interactionManager == null) {
+         this.elytraThreatHoldTicks = 0;
+         this.restoreElytraAfterThreat = false;
+         this.restoreGlideAfterThreat = false;
+         return;
+      }
+
+      boolean threatDetected = this.isImmediateChestThreat(client, player);
+      if (threatDetected) {
+         this.elytraThreatHoldTicks = ELYTRA_THREAT_HOLD_TICKS;
+         if (player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
+            boolean wasGrounded = player.isOnGround();
+            boolean wasGliding = player.isGliding();
+            this.equipChestplateFromInventory(client);
+            this.restoreElytraAfterThreat = !wasGrounded;
+            this.restoreGlideAfterThreat = wasGliding || (!wasGrounded && player.getVelocity().y < 0.0D);
+         }
+         return;
+      }
+
+      if (this.elytraThreatHoldTicks > 0) {
+         --this.elytraThreatHoldTicks;
+         return;
+      }
+
+      if (!this.restoreElytraAfterThreat) {
+         return;
+      }
+
+      if (player.isOnGround()) {
+         this.restoreElytraAfterThreat = false;
+         this.restoreGlideAfterThreat = false;
+         return;
+      }
+
+      if (!player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
+         this.equipElytraFromHotbar(client);
+      }
+
+      if (player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA) && this.restoreGlideAfterThreat) {
+         this.startFallFlyingIfPossible(player);
+      }
+
+      this.restoreElytraAfterThreat = false;
+      this.restoreGlideAfterThreat = false;
    }
 
    boolean canAutoEquipElytra(ClientPlayerEntity player) {
@@ -234,10 +328,6 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       return !player.isSneaking();
-   }
-
-   private boolean shouldPreserveElytraForBounce(ClientPlayerEntity player) {
-      return player.getPitch() >= ELYTRA_DIVE_PITCH_THRESHOLD || player.getVelocity().y <= ELYTRA_DIVE_SPEED_THRESHOLD;
    }
 
    private void tryResumeBounceGlide(MinecraftClient client) {
@@ -278,6 +368,10 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       while (ModKeyBindings.getSpearDash().wasPressed()) {
+         if (!MultitoolsSettings.spearDashEnabled) {
+            continue;
+         }
+
          if (this.spearBindDelay > 0) {
             continue;
          }
@@ -288,8 +382,8 @@ public class MultitoolsClient implements ClientModInitializer {
          }
 
          this.simulateHit(client);
-         this.spearSwapBackDelay = SPEAR_SWAP_BACK_DELAY_TICKS;
-         this.spearBindDelay = SPEAR_KEY_COOLDOWN_TICKS;
+         this.spearSwapBackDelay = MultitoolsSettings.spearSwapBackDelayTicks;
+         this.spearBindDelay = MultitoolsSettings.spearKeyCooldownTicks;
       }
    }
 
@@ -325,7 +419,7 @@ public class MultitoolsClient implements ClientModInitializer {
    }
 
    private void tickSmartAttack(MinecraftClient client) {
-      if (!ModKeyBindings.getSmartAttack().isPressed()) {
+      if (!MultitoolsSettings.smartAttackEnabled || !ModKeyBindings.getSmartAttack().isPressed()) {
          return;
       }
 
@@ -374,8 +468,53 @@ public class MultitoolsClient implements ClientModInitializer {
          return;
       }
 
-      this.pearlPitchStep = this.computePearlPitchStep(pitch) / PEARL_CATCH_AIM_TICKS;
-      this.pearlCatchDelay = PEARL_CATCH_AIM_TICKS;
+      int aimTicks = Math.max(1, MultitoolsSettings.pearlCatchAimTicks);
+      this.pearlPitchStep = this.computePearlPitchStep(pitch) / aimTicks;
+      this.pearlCatchDelay = aimTicks;
+   }
+
+   private ActionResult handleManualWindChargeUse(ClientPlayerEntity player, Hand hand) {
+      if (this.suppressManualWindChargeIntercept) {
+         return ActionResult.PASS;
+      }
+
+      ItemStack usedStack = player.getStackInHand(hand);
+      if (!usedStack.isOf(Items.WIND_CHARGE)) {
+         return ActionResult.PASS;
+      }
+
+      if (!player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
+         return ActionResult.PASS;
+      }
+
+      if (player.isOnGround()) {
+         return ActionResult.PASS;
+      }
+
+      if (player.getPitch() < WIND_CHARGE_ELYTRA_DIVE_THRESHOLD && player.getVelocity().y > -0.08D) {
+         return ActionResult.PASS;
+      }
+
+      MinecraftClient client = MinecraftClient.getInstance();
+      if (client.interactionManager == null || client.player != player) {
+         return ActionResult.PASS;
+      }
+
+      float previousPitch = player.getPitch();
+      float adjustedPitch = this.computeManualWindChargePitch(player);
+      this.suppressManualWindChargeIntercept = true;
+      try {
+         player.setPitch(adjustedPitch);
+         client.interactionManager.interactItem(player, hand);
+      } finally {
+         player.setPitch(previousPitch);
+         this.suppressManualWindChargeIntercept = false;
+      }
+      this.elytraBouncePreserveTicks = ELYTRA_BOUNCE_PRESERVE_TICKS;
+      this.elytraLandingSwapDelay = -1;
+      this.restoreElytraAfterThreat = false;
+      this.restoreGlideAfterThreat = false;
+      return ActionResult.SUCCESS;
    }
 
    private float computePearlPitchStep(float pitch) {
@@ -508,7 +647,7 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       this.useInventoryItemAtPitch(client, player, slot, SUPPORT_POTION_PITCH);
-      this.supportPotionDelay = SUPPORT_POTION_REUSE_TICKS;
+      this.supportPotionDelay = Math.max(0, MultitoolsSettings.supportPotionReuseTicks);
    }
 
    boolean swapToWindCharge(ClientPlayerEntity player) {
@@ -833,6 +972,89 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       return -1;
+   }
+
+   private boolean isImmediateChestThreat(MinecraftClient client, ClientPlayerEntity player) {
+      if (!player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
+         return false;
+      }
+
+      Vec3d playerPos = new Vec3d(player.getX(), player.getY(), player.getZ());
+      Box searchBox = player.getBoundingBox().expand(8.0D, 8.0D, 8.0D);
+      double crystalThreatRange = player.isOnGround() ? CRYSTAL_GROUNDED_THREAT_RANGE : CRYSTAL_AIR_THREAT_RANGE;
+      double crystalThreatRangeSq = crystalThreatRange * crystalThreatRange;
+      for (Entity entity : client.world.getOtherEntities(player, searchBox)) {
+         if (entity instanceof EndCrystalEntity && entity.squaredDistanceTo(playerPos) <= crystalThreatRangeSq) {
+            return true;
+         }
+
+         if (entity instanceof TntEntity tnt && tnt.squaredDistanceTo(playerPos) <= TNT_THREAT_RANGE * TNT_THREAT_RANGE && tnt.getFuse() <= TNT_MAX_THREAT_FUSE) {
+            return true;
+         }
+
+         if (entity instanceof PlayerEntity otherPlayer && this.isIncomingMaceThreat(player, otherPlayer)) {
+            return true;
+         }
+      }
+
+      return false;
+   }
+
+   private boolean isIncomingMaceThreat(ClientPlayerEntity player, PlayerEntity otherPlayer) {
+      if (otherPlayer == player || !otherPlayer.isAlive()) {
+         return false;
+      }
+
+      if (!otherPlayer.getMainHandStack().isOf(Items.MACE) && !otherPlayer.getOffHandStack().isOf(Items.MACE)) {
+         return false;
+      }
+
+      if (otherPlayer.isOnGround() || otherPlayer.getVelocity().y > MACE_THREAT_DESCENT_SPEED || otherPlayer.fallDistance < 3.0F) {
+         return false;
+      }
+
+      double horizontalDistanceSq = MathHelper.squaredHypot(otherPlayer.getX() - player.getX(), otherPlayer.getZ() - player.getZ());
+      if (horizontalDistanceSq > MACE_THREAT_HORIZONTAL_RANGE * MACE_THREAT_HORIZONTAL_RANGE) {
+         return false;
+      }
+
+      double verticalDelta = otherPlayer.getY() - player.getY();
+      return verticalDelta >= -1.0D && verticalDelta <= MACE_THREAT_VERTICAL_RANGE;
+   }
+
+   private float computeManualWindChargePitch(ClientPlayerEntity player) {
+      Vec3d velocity = player.getVelocity();
+      double horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+      double downwardSpeed = Math.max(0.0D, -velocity.y);
+      double groundDistance = this.estimateGroundDistance(player, 20.0D);
+      float pitch = 72.0F;
+      pitch += (float)(horizontalSpeed * 5.5D);
+      pitch += (float)(downwardSpeed * 14.0D);
+
+      if (groundDistance < 6.0D) {
+         pitch += 6.0F;
+      }
+      if (groundDistance < 3.5D) {
+         pitch += 6.0F;
+      }
+
+      return MathHelper.clamp(pitch, MIN_SELF_WIND_CHARGE_PITCH, MAX_SELF_WIND_CHARGE_PITCH);
+   }
+
+   private double estimateGroundDistance(ClientPlayerEntity player, double maxDistance) {
+      Vec3d start = player.getEyePos();
+      Vec3d end = start.subtract(0.0D, maxDistance, 0.0D);
+      var hit = player.getEntityWorld().raycast(new RaycastContext(
+         start,
+         end,
+         RaycastContext.ShapeType.COLLIDER,
+         RaycastContext.FluidHandling.NONE,
+         player
+      ));
+      if (hit.getType() == net.minecraft.util.hit.HitResult.Type.BLOCK) {
+         return Math.max(0.0D, start.y - hit.getPos().y);
+      }
+      return maxDistance;
    }
 
    private Entity findSmartAttackTarget(MinecraftClient client) {

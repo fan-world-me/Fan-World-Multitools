@@ -18,12 +18,6 @@ import net.minecraft.world.RaycastContext;
 
 final class DiveComboState {
    private static final double TARGET_RANGE = 30.0D;
-   private static final int TARGET_REFRESH_TICKS = 10;
-   private static final int VECTOR_REFRESH_TICKS = 3;
-   private static final int FIREWORK_REUSE_TICKS = 4;
-   private static final int LAUNCH_RECOVERY_TICKS = 6;
-   private static final int POST_STRIKE_RECOVERY_TICKS = 8;
-   private static final int GROUND_RELAUNCH_DELAY_TICKS = 2;
    private static final double BOOST_TO_DIVE_RANGE = 15.0D;
    private static final double MIN_DIVE_HEIGHT_ABOVE_TARGET = 6.0D;
    private static final double STRIKE_RANGE_MIN = 4.8D;
@@ -193,7 +187,7 @@ final class DiveComboState {
 
       if (player.isOnGround()) {
          this.phase = Phase.SEARCHING;
-         this.phaseTicks = GROUND_RELAUNCH_DELAY_TICKS;
+         this.phaseTicks = MultitoolsSettings.diveGroundRelaunchDelayTicks;
          return;
       }
 
@@ -218,7 +212,7 @@ final class DiveComboState {
 
       this.prepareForFlight(client, player);
       if (this.vectorRefreshTicks <= 0) {
-         this.vectorRefreshTicks = VECTOR_REFRESH_TICKS;
+         this.vectorRefreshTicks = MultitoolsSettings.diveVectorRefreshTicks;
          this.faceForApproach(player, target);
       }
 
@@ -244,7 +238,7 @@ final class DiveComboState {
 
       if (player.isOnGround()) {
          this.phase = Phase.SEARCHING;
-         this.phaseTicks = GROUND_RELAUNCH_DELAY_TICKS;
+         this.phaseTicks = MultitoolsSettings.diveGroundRelaunchDelayTicks;
          return;
       }
 
@@ -265,12 +259,12 @@ final class DiveComboState {
 
       if (player.isOnGround()) {
          this.phase = Phase.SEARCHING;
-         this.phaseTicks = GROUND_RELAUNCH_DELAY_TICKS;
+         this.phaseTicks = MultitoolsSettings.diveGroundRelaunchDelayTicks;
          return;
       }
 
       if (this.vectorRefreshTicks <= 0) {
-         this.vectorRefreshTicks = VECTOR_REFRESH_TICKS;
+         this.vectorRefreshTicks = MultitoolsSettings.diveVectorRefreshTicks;
          this.faceForStrike(player, target);
       }
 
@@ -293,7 +287,7 @@ final class DiveComboState {
 
       if (player.isOnGround()) {
          this.phase = Phase.SEARCHING;
-         this.phaseTicks = GROUND_RELAUNCH_DELAY_TICKS;
+         this.phaseTicks = MultitoolsSettings.diveGroundRelaunchDelayTicks;
          return;
       }
 
@@ -310,7 +304,7 @@ final class DiveComboState {
       }
 
       this.phase = Phase.POST_STRIKE;
-      this.phaseTicks = POST_STRIKE_RECOVERY_TICKS;
+      this.phaseTicks = MultitoolsSettings.divePostStrikeRecoveryTicks;
       this.clientHooks.equipElytraFromHotbar(client);
       this.clientHooks.startFallFlyingIfPossible(player);
       this.tryImmediateReboost(client, player);
@@ -329,7 +323,7 @@ final class DiveComboState {
          }
 
          this.phase = Phase.SEARCHING;
-         this.phaseTicks = GROUND_RELAUNCH_DELAY_TICKS;
+         this.phaseTicks = MultitoolsSettings.diveGroundRelaunchDelayTicks;
          return;
       }
 
@@ -364,7 +358,7 @@ final class DiveComboState {
          }
 
          this.phase = Phase.SEARCHING;
-         this.phaseTicks = GROUND_RELAUNCH_DELAY_TICKS;
+         this.phaseTicks = MultitoolsSettings.diveGroundRelaunchDelayTicks;
          return;
       }
 
@@ -394,7 +388,7 @@ final class DiveComboState {
       }
 
       this.clientHooks.useFirework(client);
-      this.fireworkCooldown = FIREWORK_REUSE_TICKS;
+      this.fireworkCooldown = MultitoolsSettings.diveFireworkReuseTicks;
    }
 
    private void tryImmediateReboost(MinecraftClient client, ClientPlayerEntity player) {
@@ -405,7 +399,7 @@ final class DiveComboState {
       this.facePosition(player, player.getEyePos().add(0.0D, 12.0D, 0.0D), REBOOST_PITCH);
       if (player.isGliding() && this.fireworkCooldown <= 0) {
          this.clientHooks.useFirework(client);
-         this.fireworkCooldown = FIREWORK_REUSE_TICKS;
+         this.fireworkCooldown = MultitoolsSettings.diveFireworkReuseTicks;
       }
    }
 
@@ -490,7 +484,7 @@ final class DiveComboState {
       }
 
       this.phase = Phase.LAUNCHING;
-      this.phaseTicks = LAUNCH_RECOVERY_TICKS;
+      this.phaseTicks = MultitoolsSettings.diveLaunchRecoveryTicks;
       return true;
    }
 
@@ -518,7 +512,7 @@ final class DiveComboState {
       }
 
       this.targetEntityId = bestTarget == null ? -1 : bestTarget.getId();
-      this.targetRefreshTicks = TARGET_REFRESH_TICKS;
+      this.targetRefreshTicks = MultitoolsSettings.diveTargetRefreshTicks;
       return bestTarget;
    }
 

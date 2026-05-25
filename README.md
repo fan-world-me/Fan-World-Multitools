@@ -45,7 +45,7 @@ Client-side Fabric mod for Minecraft `1.21.11` focused on hotbar automation, ely
 
 Output jar:
 
-- `build/libs/multitools-5.0.0.jar`
+- `build/libs/multitools-5.0.1.jar`
 
 ## Development
 
