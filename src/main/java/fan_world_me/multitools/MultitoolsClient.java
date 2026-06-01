@@ -475,13 +475,6 @@ public class MultitoolsClient implements ClientModInitializer {
          return;
       }
 
-      if (this.shouldRemoveElytraBeforeSmartAttack(client, player)) {
-         if (this.removeElytraToEmptySlot(client)) {
-            this.suppressAutoElytraForSmartAttack = true;
-         }
-         return;
-      }
-
       if (player.getVelocity().y > SMART_ATTACK_VERTICAL_SPEED) {
          return;
       }
@@ -489,6 +482,12 @@ public class MultitoolsClient implements ClientModInitializer {
       Entity target = this.findSmartAttackTarget(client);
       if (!(target instanceof LivingEntity)) {
          return;
+      }
+
+      if (player.isGliding() && player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
+         if (this.equipChestplateFromInventory(client)) {
+            this.suppressAutoElytraForSmartAttack = true;
+         }
       }
 
       client.interactionManager.attackEntity(player, target);
@@ -920,18 +919,21 @@ public class MultitoolsClient implements ClientModInitializer {
       this.swapInventoryItemIntoArmorSlot(client, player, chestplateSlot, PLAYER_CHEST_SLOT);
    }
 
-   private void equipChestplateFromInventory(MinecraftClient client) {
+   boolean equipChestplateFromInventory(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
       if (client.interactionManager == null || player == null) {
-         return;
+         return false;
       }
 
       if (player.playerScreenHandler.getCursorStack().isEmpty() && player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
          int chestplateSlot = this.findChestplateInventorySlot(player);
          if (chestplateSlot >= 0) {
             this.swapInventoryItemIntoArmorSlot(client, player, chestplateSlot, PLAYER_CHEST_SLOT);
+            return true;
          }
       }
+
+      return false;
    }
 
    private void runLoadMain(MinecraftClient client) {
@@ -1348,47 +1350,6 @@ public class MultitoolsClient implements ClientModInitializer {
       this.temporaryFluidPickupDelayTicks = -1;
       this.temporaryFluidReturnRequested = false;
       this.temporaryFluidReturnTimeoutTicks = 0;
-   }
-
-   private boolean shouldRemoveElytraBeforeSmartAttack(MinecraftClient client, ClientPlayerEntity player) {
-      if (player == null || client.interactionManager == null) {
-         return false;
-      }
-
-      if (!ModKeyBindings.getSmartAttack().isPressed() || !player.isGliding()) {
-         return false;
-      }
-
-      return player.getVelocity().y <= SMART_ATTACK_VERTICAL_SPEED && player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA);
-   }
-
-   private boolean removeElytraToEmptySlot(MinecraftClient client) {
-      ClientPlayerEntity player = client.player;
-      if (client.interactionManager == null || player == null) {
-         return false;
-      }
-
-      if (!player.playerScreenHandler.getCursorStack().isEmpty()) {
-         return false;
-      }
-
-      if (!player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
-         return false;
-      }
-
-      int emptyHotbarSlot = this.findFirstEmptyHotbarSlot(player);
-      if (emptyHotbarSlot >= 0) {
-         this.swapInventoryItemIntoArmorSlot(client, player, emptyHotbarSlot, PLAYER_CHEST_SLOT);
-         return true;
-      }
-
-      int emptyInventorySlot = this.findFirstEmptyInventorySlot(player);
-      if (emptyInventorySlot >= 0) {
-         this.swapInventoryItemIntoArmorSlot(client, player, emptyInventorySlot, PLAYER_CHEST_SLOT);
-         return true;
-      }
-
-      return false;
    }
 
    private boolean attackEntityFromInventorySlot(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, LivingEntity target) {

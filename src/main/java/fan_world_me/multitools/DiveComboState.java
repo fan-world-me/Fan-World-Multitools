@@ -44,9 +44,10 @@ final class DiveComboState {
    private int vectorRefreshTicks = 0;
    private int fireworkCooldown = 0;
    private int phaseTicks = 0;
-    private int failedDiveAttempts = 0;
+   private int failedDiveAttempts = 0;
    private double ascentTargetY = Double.NaN;
    private double lastVelocityY = 0.0D;
+   private boolean preserveChestplateDuringDive = false;
    private boolean active = false;
 
    DiveComboState(MultitoolsClient clientHooks) {
@@ -66,6 +67,9 @@ final class DiveComboState {
 
       this.stop(client, true);
       this.start(player);
+      if (player.isGliding()) {
+         this.preserveChestplateDuringDive = this.clientHooks.equipChestplateFromInventory(client);
+      }
       this.active = true;
    }
 
@@ -139,6 +143,7 @@ final class DiveComboState {
       this.failedDiveAttempts = 0;
       this.ascentTargetY = Double.NaN;
       this.lastVelocityY = player.getVelocity().y;
+      this.preserveChestplateDuringDive = false;
       MaceSwapState.setAutomationSuppressed(true);
    }
 
@@ -158,6 +163,7 @@ final class DiveComboState {
       this.failedDiveAttempts = 0;
       this.ascentTargetY = Double.NaN;
       this.previousSelectedSlot = -1;
+      this.preserveChestplateDuringDive = false;
    }
 
    private void tickSearching(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
@@ -310,6 +316,7 @@ final class DiveComboState {
       }
 
       this.failedDiveAttempts = 0;
+      this.preserveChestplateDuringDive = false;
       this.phase = Phase.POST_STRIKE;
       this.phaseTicks = MultitoolsSettings.divePostStrikeRecoveryTicks;
       this.clientHooks.equipElytraFromHotbar(client);
@@ -377,6 +384,10 @@ final class DiveComboState {
    }
 
    private void prepareForFlight(MinecraftClient client, ClientPlayerEntity player) {
+      if (this.preserveChestplateDuringDive) {
+         return;
+      }
+
       if (!player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA) && this.clientHooks.canAutoEquipElytra(player)) {
          this.clientHooks.equipElytraFromHotbar(client);
       }
