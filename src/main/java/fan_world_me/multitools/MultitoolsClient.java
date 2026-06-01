@@ -23,6 +23,7 @@ import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.potion.Potions;
 import net.minecraft.registry.RegistryKeys;
@@ -31,12 +32,17 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 import net.minecraft.component.type.PotionContentsComponent;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
 
 import java.util.ArrayDeque;
 import java.util.Optional;
@@ -67,6 +73,11 @@ public class MultitoolsClient implements ClientModInitializer {
    private static final double MACE_THREAT_HORIZONTAL_RANGE = 3.4D;
    private static final double MACE_THREAT_VERTICAL_RANGE = 7.5D;
    private static final double MACE_THREAT_DESCENT_SPEED = -0.55D;
+   private static final double WATER_DROP_TRIGGER_DISTANCE = 4.25D;
+   private static final double WATER_DROP_TRIGGER_SPEED = -0.55D;
+   private static final int TEMP_FLUID_EXTINGUISH_TICKS = 2;
+   private static final int TEMP_FLUID_LAVA_TICKS = 2;
+   private static final float STRAIGHT_DOWN_PITCH = 90.0F;
 
    private final DiveComboState diveComboState = new DiveComboState(this);
    private final ArrayDeque<Integer> pendingSupportPotionSlots = new ArrayDeque<>();
@@ -90,12 +101,24 @@ public class MultitoolsClient implements ClientModInitializer {
    private boolean restoreElytraAfterThreat = false;
    private boolean restoreGlideAfterThreat = false;
    private boolean suppressManualWindChargeIntercept = false;
+   private boolean suppressAutoElytraForSmartAttack = false;
+   private TemporaryFluidMode temporaryFluidMode = TemporaryFluidMode.NONE;
+   private BlockPos temporaryFluidPos = null;
+   private Item temporaryFluidExpectedBucketItem = Items.BUCKET;
+   private int temporaryFluidTicks = 0;
+   private int temporaryFluidPickupDelayTicks = -1;
+   private boolean temporaryFluidReturnRequested = false;
+   private int temporaryFluidReturnTimeoutTicks = 0;
+   private boolean lastWaterUtilityPressed = false;
+   private boolean lastWebTrapPressed = false;
 
    @Override
    public void onInitializeClient() {
       MultitoolsSettings.load();
       ModKeyBindings.getSpearDash();
       ModKeyBindings.getPearlCatch();
+      ModKeyBindings.getWaterUtility();
+      ModKeyBindings.getWebTrap();
       ModKeyBindings.getSmartAttack();
       ModKeyBindings.getDiveCombo();
       ModKeyBindings.getFireworkBoost();
@@ -133,6 +156,8 @@ public class MultitoolsClient implements ClientModInitializer {
             this.diveComboState.cancel(client);
          }
 
+         this.tickTemporaryFluid(client);
+
          while (ModKeyBindings.getAutoTotem().wasPressed()) {
             MultitoolsSettings.autoTotemEnabled = !MultitoolsSettings.autoTotemEnabled;
             MultitoolsSettings.save();
@@ -154,27 +179,35 @@ public class MultitoolsClient implements ClientModInitializer {
             }
          }
 
+         while (ModKeyBindings.getWaterUtility().wasPressed()) {
+            this.handleWaterUtilityTap(client);
+         }
+
+         while (ModKeyBindings.getWebTrap().wasPressed()) {
+            this.handleWebTrapTap(client);
+         }
+
          while (ModKeyBindings.getLoadMain().wasPressed()) {
             if (MultitoolsSettings.loadMainEnabled) {
                this.runLoadMain(client);
             }
          }
 
-         while (ModKeyBindings.getSettings().wasPressed()) {
-            if (MultitoolsSettings.railgunEnabled) {
-               this.queueCommand(client, "givef railgun straight 1");
+      while (ModKeyBindings.getSettings().wasPressed()) {
+         if (MultitoolsSettings.railgunEnabled) {
+               this.queueGiveCommand(client, "givef railgun straight 1");
             }
          }
 
          while (ModKeyBindings.getGiveNuke().wasPressed()) {
             if (MultitoolsSettings.nukeEnabled) {
-               this.queueCommand(client, "givef nuke 1 11");
+               this.queueGiveCommand(client, "givef nuke 1 11");
             }
          }
 
          while (ModKeyBindings.getGiveStab().wasPressed()) {
             if (MultitoolsSettings.stabEnabled) {
-               this.queueCommand(client, "givef stab 1");
+               this.queueGiveCommand(client, "givef stab 1");
             }
          }
 
@@ -192,6 +225,7 @@ public class MultitoolsClient implements ClientModInitializer {
 
          while (ModKeyBindings.getKillNonPlayers().wasPressed()) {
             if (MultitoolsSettings.killNonPlayersEnabled) {
+               client.player.networkHandler.sendChatCommand("kill @e[type=!minecraft:player]");
                client.player.networkHandler.sendChatCommand("kill @e[type=!minecraft:player]");
             }
          }
@@ -211,6 +245,8 @@ public class MultitoolsClient implements ClientModInitializer {
          this.tickElytraSwap(client);
          this.tickSpearDash(client);
          this.tickPearlCatch(client);
+         this.tickWaterUtilityHold(client);
+         this.tickWebTrapHold(client);
          while (ModKeyBindings.getDiveCombo().wasPressed()) {
             if (MultitoolsSettings.diveComboEnabled) {
                this.diveComboState.trigger(client);
@@ -253,7 +289,7 @@ public class MultitoolsClient implements ClientModInitializer {
       if (jumpPressed && !this.lastJumpPressed) {
          if (gliding) {
             this.equipChestplateFromInventory(client);
-         } else if (!onGround && this.canAutoEquipElytra(player)) {
+         } else if (!onGround && this.canAutoEquipElytra(player) && !this.suppressAutoElytraForSmartAttack) {
             this.equipElytraFromHotbar(client);
          }
       }
@@ -430,10 +466,22 @@ public class MultitoolsClient implements ClientModInitializer {
 
    private void tickSmartAttack(MinecraftClient client) {
       if (!MultitoolsSettings.smartAttackEnabled || !ModKeyBindings.getSmartAttack().isPressed()) {
+         this.suppressAutoElytraForSmartAttack = false;
          return;
       }
 
       ClientPlayerEntity player = client.player;
+      if (player == null) {
+         return;
+      }
+
+      if (this.shouldRemoveElytraBeforeSmartAttack(client, player)) {
+         if (this.removeElytraToEmptySlot(client)) {
+            this.suppressAutoElytraForSmartAttack = true;
+         }
+         return;
+      }
+
       if (player.getVelocity().y > SMART_ATTACK_VERTICAL_SPEED) {
          return;
       }
@@ -445,6 +493,71 @@ public class MultitoolsClient implements ClientModInitializer {
 
       client.interactionManager.attackEntity(player, target);
       player.swingHand(Hand.MAIN_HAND);
+   }
+
+   private void tickWaterUtilityHold(MinecraftClient client) {
+      this.lastWaterUtilityPressed = ModKeyBindings.getWaterUtility().isPressed();
+   }
+
+   private void tickWebTrapHold(MinecraftClient client) {
+      this.lastWebTrapPressed = ModKeyBindings.getWebTrap().isPressed();
+   }
+
+   private void handleWaterUtilityTap(MinecraftClient client) {
+      return;
+   }
+
+   private void handleWebTrapTap(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || this.isInsideCobweb(client, player)) {
+         return;
+      }
+
+      this.trySwordWebTrap(client);
+   }
+
+   private void tickTemporaryFluid(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || client.world == null) {
+         this.clearTemporaryFluid();
+         return;
+      }
+
+      if (this.temporaryFluidMode == TemporaryFluidMode.NONE || this.temporaryFluidPos == null) {
+         return;
+      }
+
+      ++this.temporaryFluidTicks;
+      if (this.temporaryFluidReturnRequested && this.temporaryFluidReturnTimeoutTicks > 0) {
+         --this.temporaryFluidReturnTimeoutTicks;
+      }
+
+      if (this.temporaryFluidPickupDelayTicks > 0) {
+         --this.temporaryFluidPickupDelayTicks;
+      }
+
+      boolean fluidPresent = this.isTemporaryFluidStillPresent(client);
+      if (!fluidPresent && !this.temporaryFluidReturnRequested) {
+         this.clearTemporaryFluid();
+         return;
+      }
+
+      if (this.temporaryFluidReturnRequested && this.temporaryFluidPickupDelayTicks <= 0) {
+         this.tryPickupTemporaryFluid(client);
+      }
+
+      if (this.temporaryFluidPickupDelayTicks > 0) {
+         return;
+      }
+
+      if (this.temporaryFluidReturnRequested) {
+         this.tryPickupTemporaryFluid(client);
+         return;
+      }
+
+      if (this.shouldPickupTemporaryFluidNow(client)) {
+         this.tryPickupTemporaryFluid(client);
+      }
    }
 
    private void resetPearlCatchState() {
@@ -890,6 +1003,25 @@ public class MultitoolsClient implements ClientModInitializer {
       player.networkHandler.sendChatCommand(command);
    }
 
+   private void queueGiveCommand(MinecraftClient client, String command) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || player.networkHandler == null) {
+         return;
+      }
+
+      int emptyHotbarSlot = this.findFirstEmptyHotbarSlot(player);
+      if (emptyHotbarSlot >= 0) {
+         if (player.getInventory().getSelectedSlot() != emptyHotbarSlot) {
+            MaceSwapState.setSelectedHotbarSlot(client, player, emptyHotbarSlot);
+         }
+
+         player.networkHandler.sendChatCommand(command);
+         return;
+      }
+
+      this.queueCommand(client, command);
+   }
+
    private void tickQueuedCommand(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
       if (player == null || player.networkHandler == null || this.pendingCommand == null) {
@@ -916,6 +1048,508 @@ public class MultitoolsClient implements ClientModInitializer {
       if (!player.playerScreenHandler.getCursorStack().isEmpty()) {
          client.interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
       }
+   }
+
+   private boolean tryPlaceWaterBelowSelf(MinecraftClient client, TemporaryFluidMode mode) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || this.temporaryFluidMode != TemporaryFluidMode.NONE) {
+         return false;
+      }
+
+      int waterBucketSlot = this.findInventorySlot(player, Items.WATER_BUCKET);
+      if (waterBucketSlot < 0) {
+         return false;
+      }
+
+      BlockPos supportPos = this.findSupportBlockBelowPlayer(player, mode == TemporaryFluidMode.COBWEB_WATER ? 3.5D : 6.0D);
+      if (supportPos == null) {
+         return false;
+      }
+
+      BlockPos sourcePos = supportPos.up();
+      if (!this.canUseTemporaryFluidAt(client, sourcePos, false)) {
+         return false;
+      }
+
+      float yaw = player.getYaw();
+      if (!this.useInventoryItemAtAnglesConfirmed(client, player, waterBucketSlot, STRAIGHT_DOWN_PITCH, yaw, Items.BUCKET)) {
+         return false;
+      }
+
+      this.temporaryFluidMode = mode;
+      this.temporaryFluidPos = sourcePos;
+      this.temporaryFluidExpectedBucketItem = Items.WATER_BUCKET;
+      this.temporaryFluidTicks = 0;
+      this.temporaryFluidPickupDelayTicks = 1;
+      this.temporaryFluidReturnRequested = false;
+      this.temporaryFluidReturnTimeoutTicks = 0;
+      return true;
+   }
+
+   private boolean tryPlaceLavaUnderTarget(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || this.temporaryFluidMode != TemporaryFluidMode.NONE) {
+         return false;
+      }
+
+      LivingEntity target = this.findPriorityTrapTarget(client);
+      if (target == null) {
+         return false;
+      }
+
+      int lavaBucketSlot = this.findInventorySlot(player, Items.LAVA_BUCKET);
+      if (lavaBucketSlot < 0) {
+         return false;
+      }
+
+      BlockPos placementPos = this.findBlockUnderTarget(client, target, 14.0D);
+      if (placementPos == null || !this.canUseTemporaryFluidAt(client, placementPos, false)) {
+         return false;
+      }
+
+      if (!this.useInventoryItemOnBlockFlexibleConfirmed(client, player, lavaBucketSlot, placementPos.down(), Items.BUCKET)) {
+         return false;
+      }
+
+      this.temporaryFluidMode = TemporaryFluidMode.LAVA_TRAP;
+      this.temporaryFluidPos = placementPos;
+      this.temporaryFluidExpectedBucketItem = Items.LAVA_BUCKET;
+      this.temporaryFluidTicks = 0;
+      this.temporaryFluidPickupDelayTicks = 1;
+      this.temporaryFluidReturnRequested = false;
+      this.temporaryFluidReturnTimeoutTicks = 0;
+      return true;
+   }
+
+   private boolean trySwordWebTrap(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null) {
+         return false;
+      }
+
+      LivingEntity target = this.findPriorityTrapTarget(client);
+      if (target == null) {
+         return false;
+      }
+
+      int swordSlot = this.findInventorySlotByTag(player, ItemTags.SWORDS);
+      int cobwebSlot = this.findInventorySlot(player, Items.COBWEB);
+      if (swordSlot < 0 || cobwebSlot < 0) {
+         return false;
+      }
+
+      boolean attacked = this.attackEntityFromInventorySlot(client, player, swordSlot, target);
+      if (!attacked) {
+         return false;
+      }
+
+      BlockPos placementPos = this.findEntityLandingPlacement(client, player, target, 16.0D, 2.5D);
+      if (placementPos == null || !this.canPlaceCobwebAt(client, placementPos)) {
+         return true;
+      }
+
+      this.useInventoryItemOnBlock(client, player, cobwebSlot, placementPos.down(), Direction.UP, STRAIGHT_DOWN_PITCH);
+      this.temporaryFluidMode = TemporaryFluidMode.COBWEB_WATER;
+      this.temporaryFluidPos = placementPos;
+      this.temporaryFluidExpectedBucketItem = Items.WATER_BUCKET;
+      this.temporaryFluidTicks = 0;
+      this.temporaryFluidPickupDelayTicks = 1;
+      this.temporaryFluidReturnRequested = false;
+      this.temporaryFluidReturnTimeoutTicks = 0;
+      return true;
+   }
+
+   private boolean shouldAttemptWaterDrop(ClientPlayerEntity player) {
+      return !player.isOnGround() && player.getVelocity().y <= WATER_DROP_TRIGGER_SPEED && this.estimateGroundDistance(player, 12.0D) <= WATER_DROP_TRIGGER_DISTANCE;
+   }
+
+   private boolean isInsideCobweb(MinecraftClient client, ClientPlayerEntity player) {
+      BlockPos feetPos = BlockPos.ofFloored(player.getX(), player.getBoundingBox().minY + 0.05D, player.getZ());
+      BlockPos bodyPos = player.getBlockPos();
+      return client.world.getBlockState(feetPos).isOf(Blocks.COBWEB) || client.world.getBlockState(bodyPos).isOf(Blocks.COBWEB);
+   }
+
+   private LivingEntity findPriorityTrapTarget(MinecraftClient client) {
+      Entity entity = this.findBestAttackTarget(client, SMART_ATTACK_RANGE, 3.5D);
+      return entity instanceof LivingEntity living ? living : null;
+   }
+
+   private BlockPos findSupportBlockBelowPlayer(ClientPlayerEntity player, double maxDistance) {
+      Vec3d start = new Vec3d(player.getX(), player.getY() + 0.2D, player.getZ());
+      Vec3d end = start.subtract(0.0D, maxDistance, 0.0D);
+      BlockHitResult hit = player.getEntityWorld().raycast(new RaycastContext(
+         start,
+         end,
+         RaycastContext.ShapeType.COLLIDER,
+         RaycastContext.FluidHandling.NONE,
+         player
+      ));
+      return hit.getType() == HitResult.Type.BLOCK ? hit.getBlockPos() : null;
+   }
+
+   private BlockPos findEntityLandingPlacement(MinecraftClient client, ClientPlayerEntity player, LivingEntity target, double maxDistance, double forwardOffset) {
+      Vec3d predictedBase = this.computeForwardTrapBase(player, target, forwardOffset);
+      BlockPos currentPos = BlockPos.ofFloored(predictedBase.x, target.getY(), predictedBase.z);
+      if (client.world.getBlockState(currentPos).isAir() && this.hasSolidSupport(client, currentPos.down())) {
+         return currentPos;
+      }
+
+      Vec3d start = new Vec3d(predictedBase.x, target.getY() + 0.2D, predictedBase.z);
+      Vec3d end = start.subtract(0.0D, maxDistance, 0.0D);
+      BlockHitResult hit = client.world.raycast(new RaycastContext(
+         start,
+         end,
+         RaycastContext.ShapeType.COLLIDER,
+         RaycastContext.FluidHandling.NONE,
+         target
+      ));
+      if (hit.getType() != HitResult.Type.BLOCK) {
+         return null;
+      }
+
+      BlockPos placementPos = hit.getBlockPos().up();
+      return client.world.getBlockState(placementPos).isAir() ? placementPos : null;
+   }
+
+   private BlockPos findBlockUnderTarget(MinecraftClient client, LivingEntity target, double maxDistance) {
+      Vec3d targetCenter = new Vec3d(target.getX(), target.getY(), target.getZ());
+      BlockPos base = BlockPos.ofFloored(targetCenter.x, target.getBoundingBox().minY - 0.05D, targetCenter.z);
+      if (client.world.getBlockState(base).isAir() && this.hasSolidSupport(client, base.down())) {
+         return base;
+      }
+
+      Vec3d start = new Vec3d(targetCenter.x, target.getBoundingBox().minY + 0.2D, targetCenter.z);
+      Vec3d end = start.subtract(0.0D, maxDistance, 0.0D);
+      BlockHitResult hit = client.world.raycast(new RaycastContext(
+         start,
+         end,
+         RaycastContext.ShapeType.COLLIDER,
+         RaycastContext.FluidHandling.NONE,
+         target
+      ));
+      if (hit.getType() != HitResult.Type.BLOCK) {
+         return null;
+      }
+
+      BlockPos placementPos = hit.getBlockPos().up();
+      return client.world.getBlockState(placementPos).isAir() ? placementPos : null;
+   }
+
+   private Vec3d computeForwardTrapBase(ClientPlayerEntity player, LivingEntity target, double forwardOffset) {
+      Vec3d away = new Vec3d(target.getX() - player.getX(), 0.0D, target.getZ() - player.getZ());
+      if (away.lengthSquared() < 1.0E-6D) {
+         away = player.getRotationVec(1.0F);
+         away = new Vec3d(away.x, 0.0D, away.z);
+      }
+
+      if (away.lengthSquared() < 1.0E-6D) {
+         away = new Vec3d(0.0D, 0.0D, 1.0D);
+      }
+
+      Vec3d horizontalAway = away.normalize().multiply(forwardOffset);
+      Vec3d targetVelocity = new Vec3d(target.getVelocity().x, 0.0D, target.getVelocity().z).multiply(3.0D);
+      return new Vec3d(target.getX(), target.getY(), target.getZ()).add(horizontalAway).add(targetVelocity);
+   }
+
+   private boolean canUseTemporaryFluidAt(MinecraftClient client, BlockPos sourcePos, boolean requireCobweb) {
+      BlockState state = client.world.getBlockState(sourcePos);
+      if (requireCobweb) {
+         return state.isOf(Blocks.COBWEB);
+      }
+
+      return state.isAir() || state.isOf(Blocks.COBWEB) || !state.getFluidState().isEmpty();
+   }
+
+   private boolean canPlaceCobwebAt(MinecraftClient client, BlockPos placementPos) {
+      return client.world.getBlockState(placementPos).isAir() && this.hasSolidSupport(client, placementPos.down());
+   }
+
+   private boolean hasSolidSupport(MinecraftClient client, BlockPos supportPos) {
+      return !client.world.getBlockState(supportPos).isAir();
+   }
+
+   private boolean tryPickupTemporaryFluid(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null || this.temporaryFluidPos == null) {
+         this.clearTemporaryFluid();
+         return false;
+      }
+
+      int emptyBucketSlot = this.findInventorySlot(player, Items.BUCKET);
+      if (emptyBucketSlot < 0) {
+         return false;
+      }
+
+      Item expectedFilledBucket = this.temporaryFluidExpectedBucketItem;
+
+      this.useInventoryItemOnBlockFlexibleConfirmed(client, player, emptyBucketSlot, this.temporaryFluidPos, expectedFilledBucket);
+
+      boolean fluidPresent = this.isTemporaryFluidStillPresent(client);
+      boolean bucketReturned = player.getInventory().getStack(emptyBucketSlot).isOf(expectedFilledBucket);
+      if (fluidPresent || !bucketReturned) {
+         return false;
+      }
+
+      this.clearTemporaryFluid();
+      return true;
+   }
+
+   private void requestTemporaryFluidReturn(MinecraftClient client) {
+      if (this.temporaryFluidMode == TemporaryFluidMode.NONE) {
+         return;
+      }
+
+      this.temporaryFluidReturnRequested = true;
+      this.temporaryFluidReturnTimeoutTicks = 20;
+      this.temporaryFluidPickupDelayTicks = 0;
+      this.tryPickupTemporaryFluid(client);
+   }
+
+   private boolean isHoldFluidMode(TemporaryFluidMode mode) {
+      return mode == TemporaryFluidMode.WATER_DROP
+         || mode == TemporaryFluidMode.GROUND_EXTINGUISH
+         || mode == TemporaryFluidMode.LAVA_TRAP
+         || mode == TemporaryFluidMode.COBWEB_WATER;
+   }
+
+   private boolean shouldPickupTemporaryFluidNow(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (player == null) {
+         return false;
+      }
+
+      return switch (this.temporaryFluidMode) {
+         case WATER_DROP -> this.temporaryFluidReturnRequested || player.isOnGround() || player.isTouchingWater();
+         case GROUND_EXTINGUISH -> this.temporaryFluidReturnRequested || !player.isOnFire();
+         case LAVA_TRAP -> this.temporaryFluidReturnRequested || this.temporaryFluidTicks >= TEMP_FLUID_LAVA_TICKS;
+         case COBWEB_WATER -> this.temporaryFluidReturnRequested || !ModKeyBindings.getWebTrap().isPressed() || !this.isInsideCobweb(client, player);
+         case NONE -> false;
+      };
+   }
+
+   private boolean isTemporaryFluidStillPresent(MinecraftClient client) {
+      if (this.temporaryFluidPos == null) {
+         return false;
+      }
+
+      BlockState state = client.world.getBlockState(this.temporaryFluidPos);
+      return switch (this.temporaryFluidMode) {
+         case WATER_DROP, GROUND_EXTINGUISH, COBWEB_WATER -> state.isOf(Blocks.WATER) || state.isOf(Blocks.KELP) || !state.getFluidState().isEmpty() && state.getFluidState().isStill();
+         case LAVA_TRAP -> state.isOf(Blocks.LAVA) || !state.getFluidState().isEmpty() && state.getFluidState().isStill();
+         case NONE -> false;
+      };
+   }
+
+   private void clearTemporaryFluid() {
+      this.temporaryFluidMode = TemporaryFluidMode.NONE;
+      this.temporaryFluidPos = null;
+      this.temporaryFluidExpectedBucketItem = Items.BUCKET;
+      this.temporaryFluidTicks = 0;
+      this.temporaryFluidPickupDelayTicks = -1;
+      this.temporaryFluidReturnRequested = false;
+      this.temporaryFluidReturnTimeoutTicks = 0;
+   }
+
+   private boolean shouldRemoveElytraBeforeSmartAttack(MinecraftClient client, ClientPlayerEntity player) {
+      if (player == null || client.interactionManager == null) {
+         return false;
+      }
+
+      if (!ModKeyBindings.getSmartAttack().isPressed() || !player.isGliding()) {
+         return false;
+      }
+
+      return player.getVelocity().y <= SMART_ATTACK_VERTICAL_SPEED && player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA);
+   }
+
+   private boolean removeElytraToEmptySlot(MinecraftClient client) {
+      ClientPlayerEntity player = client.player;
+      if (client.interactionManager == null || player == null) {
+         return false;
+      }
+
+      if (!player.playerScreenHandler.getCursorStack().isEmpty()) {
+         return false;
+      }
+
+      if (!player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA)) {
+         return false;
+      }
+
+      int emptyHotbarSlot = this.findFirstEmptyHotbarSlot(player);
+      if (emptyHotbarSlot >= 0) {
+         this.swapInventoryItemIntoArmorSlot(client, player, emptyHotbarSlot, PLAYER_CHEST_SLOT);
+         return true;
+      }
+
+      int emptyInventorySlot = this.findFirstEmptyInventorySlot(player);
+      if (emptyInventorySlot >= 0) {
+         this.swapInventoryItemIntoArmorSlot(client, player, emptyInventorySlot, PLAYER_CHEST_SLOT);
+         return true;
+      }
+
+      return false;
+   }
+
+   private boolean attackEntityFromInventorySlot(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, LivingEntity target) {
+      if (client.interactionManager == null || target == null) {
+         return false;
+      }
+
+      final boolean[] attacked = {false};
+      if (!this.runWithInventorySlotSelected(client, player, inventorySlot, () -> {
+         client.interactionManager.attackEntity(player, target);
+         player.swingHand(Hand.MAIN_HAND);
+         attacked[0] = true;
+      })) {
+         return false;
+      }
+
+      return attacked[0];
+   }
+
+   private boolean useInventoryItemOnBlock(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, BlockPos blockPos, Direction side, float pitch) {
+      if (client.interactionManager == null) {
+         return false;
+      }
+
+      final boolean[] used = {false};
+      if (!this.runWithInventorySlotSelected(client, player, inventorySlot, () -> {
+         float previousPitch = player.getPitch();
+         float previousYaw = player.getYaw();
+         Vec3d hitPos = Vec3d.ofCenter(blockPos).add(0.0D, side == Direction.UP ? 0.5D : 0.0D, 0.0D);
+         this.facePosition(player, hitPos, pitch);
+         ActionResult result = client.interactionManager.interactBlock(player, Hand.MAIN_HAND, new BlockHitResult(hitPos, side, blockPos, false));
+         if (result.isAccepted()) {
+            player.swingHand(Hand.MAIN_HAND);
+            used[0] = true;
+         }
+         player.setPitch(previousPitch);
+         player.setYaw(previousYaw);
+      })) {
+         return false;
+      }
+
+      return used[0];
+   }
+
+   private boolean useInventoryItemOnBlockFlexible(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, BlockPos blockPos) {
+      if (client.interactionManager == null) {
+         return false;
+      }
+
+      Direction[] directions = new Direction[] {Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.DOWN};
+      for (Direction side : directions) {
+         if (this.useInventoryItemOnBlock(client, player, inventorySlot, blockPos, side, STRAIGHT_DOWN_PITCH)) {
+            return true;
+         }
+      }
+
+      return false;
+   }
+
+   private boolean useInventoryItemOnBlockFlexibleConfirmed(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, BlockPos blockPos, Item expectedAfterItem) {
+      if (client.interactionManager == null) {
+         return false;
+      }
+
+      Direction[] directions = new Direction[] {Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.DOWN};
+      for (Direction side : directions) {
+         this.useInventoryItemOnBlock(client, player, inventorySlot, blockPos, side, STRAIGHT_DOWN_PITCH);
+         if (player.getInventory().getStack(inventorySlot).isOf(expectedAfterItem)) {
+            return true;
+         }
+      }
+
+      return player.getInventory().getStack(inventorySlot).isOf(expectedAfterItem);
+   }
+
+   private boolean useInventoryItemAtAngles(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, float pitch, float yaw) {
+      if (client.interactionManager == null) {
+         return false;
+      }
+
+      final boolean[] used = {false};
+      if (!this.runWithInventorySlotSelected(client, player, inventorySlot, () -> {
+         float previousPitch = player.getPitch();
+         float previousYaw = player.getYaw();
+         player.setYaw(yaw);
+         player.setPitch(MathHelper.clamp(pitch, -90.0F, 90.0F));
+         ActionResult result = client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+         if (result.isAccepted()) {
+            player.swingHand(Hand.MAIN_HAND);
+            used[0] = true;
+         }
+         player.setPitch(previousPitch);
+         player.setYaw(previousYaw);
+      })) {
+         return false;
+      }
+
+      return used[0];
+   }
+
+   private boolean useInventoryItemAtAnglesConfirmed(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, float pitch, float yaw, Item expectedAfterItem) {
+      if (client.interactionManager == null) {
+         return false;
+      }
+
+      this.useInventoryItemAtAngles(client, player, inventorySlot, pitch, yaw);
+      return player.getInventory().getStack(inventorySlot).isOf(expectedAfterItem);
+   }
+
+   private boolean runWithInventorySlotSelected(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, Runnable action) {
+      if (inventorySlot < 0 || inventorySlot >= 36 || client.interactionManager == null) {
+         return false;
+      }
+
+      int selectedSlot = player.getInventory().getSelectedSlot();
+      if (inventorySlot < 9) {
+         MaceSwapState.setSelectedHotbarSlot(client, player, inventorySlot);
+         try {
+            action.run();
+         } finally {
+            MaceSwapState.setSelectedHotbarSlot(client, player, selectedSlot);
+         }
+         return true;
+      }
+
+      if (!player.playerScreenHandler.getCursorStack().isEmpty()) {
+         return false;
+      }
+
+      int syncId = player.playerScreenHandler.syncId;
+      int sourceSlot = this.toScreenHandlerSlot(inventorySlot);
+      client.interactionManager.clickSlot(syncId, sourceSlot, selectedSlot, SlotActionType.SWAP, player);
+      try {
+         action.run();
+      } finally {
+         client.interactionManager.clickSlot(syncId, sourceSlot, selectedSlot, SlotActionType.SWAP, player);
+      }
+      return true;
+   }
+
+   private int findInventorySlotByTag(ClientPlayerEntity player, net.minecraft.registry.tag.TagKey<Item> tag) {
+      for (int slot = 0; slot < 36; ++slot) {
+         ItemStack stack = player.getInventory().getStack(slot);
+         if (!stack.isEmpty() && stack.isIn(tag)) {
+            return slot;
+         }
+      }
+
+      return -1;
+   }
+
+   private void facePosition(ClientPlayerEntity player, Vec3d targetPos, float pitch) {
+      Vec3d delta = targetPos.subtract(player.getEyePos());
+      float yaw = this.computeYawTo(player.getEyePos(), targetPos);
+      player.setYaw(yaw);
+      player.setPitch(MathHelper.clamp(pitch, -90.0F, 90.0F));
+   }
+
+   private float computeYawTo(Vec3d source, Vec3d target) {
+      Vec3d delta = target.subtract(source);
+      return (float)(Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0D);
    }
 
    private int findHotbarSlot(ClientPlayerEntity player, Item item) {
@@ -1173,5 +1807,12 @@ public class MultitoolsClient implements ClientModInitializer {
       }
    }
 
+   private enum TemporaryFluidMode {
+      NONE,
+      WATER_DROP,
+      GROUND_EXTINGUISH,
+      LAVA_TRAP,
+      COBWEB_WATER
+   }
 }
 

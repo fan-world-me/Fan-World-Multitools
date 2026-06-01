@@ -22,11 +22,15 @@ final class DiveComboState {
    private static final double MIN_DIVE_HEIGHT_ABOVE_TARGET = 6.0D;
    private static final double STRIKE_RANGE_MIN = 4.8D;
    private static final double STRIKE_RANGE_MAX = 6.2D;
+   private static final double STRIKE_ALIGNMENT_MIN = 0.93D;
+   private static final double STRIKE_MAX_LATERAL_OFFSET = 1.75D;
+   private static final double STRIKE_MIN_CLOSING_SPEED = 0.12D;
    private static final double OBSTACLE_LOOKAHEAD = 5.0D;
    private static final double SAFETY_ASCENT_HEIGHT = 7.0D;
    private static final double SELF_WIND_BURST_DELTA_Y = 0.42D;
    private static final double TARGET_FALLING_THRESHOLD = -0.08D;
    private static final double TARGET_RISING_THRESHOLD = 0.18D;
+   private static final int RETARGET_AFTER_FAILED_DIVES = 2;
    private static final float SELF_BOOST_PITCH = 88.0F;
    private static final float REBOOST_PITCH = -80.0F;
    private static final float ASCENT_PITCH = -68.0F;
@@ -40,8 +44,8 @@ final class DiveComboState {
    private int vectorRefreshTicks = 0;
    private int fireworkCooldown = 0;
    private int phaseTicks = 0;
+    private int failedDiveAttempts = 0;
    private double ascentTargetY = Double.NaN;
-   private boolean lastButtonPressed = false;
    private double lastVelocityY = 0.0D;
    private boolean active = false;
 
@@ -132,6 +136,7 @@ final class DiveComboState {
       this.vectorRefreshTicks = 0;
       this.fireworkCooldown = 0;
       this.phaseTicks = 0;
+      this.failedDiveAttempts = 0;
       this.ascentTargetY = Double.NaN;
       this.lastVelocityY = player.getVelocity().y;
       MaceSwapState.setAutomationSuppressed(true);
@@ -150,6 +155,7 @@ final class DiveComboState {
       this.vectorRefreshTicks = 0;
       this.fireworkCooldown = 0;
       this.phaseTicks = 0;
+      this.failedDiveAttempts = 0;
       this.ascentTargetY = Double.NaN;
       this.previousSelectedSlot = -1;
    }
@@ -253,7 +259,7 @@ final class DiveComboState {
 
    private void tickDiving(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
       if (target == null) {
-         this.recoverToBoosting(client, player);
+         this.recoverToBoosting(client, player, true);
          return;
       }
 
@@ -270,18 +276,18 @@ final class DiveComboState {
 
       double distance = Math.sqrt(player.squaredDistanceTo(target));
       if (distance < STRIKE_RANGE_MIN) {
-         this.recoverToBoosting(client, player);
+         this.recoverToBoosting(client, player, true);
          return;
       }
 
-      if (distance <= STRIKE_RANGE_MAX && player.getVelocity().y < -0.08D && player.fallDistance > 3.0F && player.getY() > target.getY() + 2.5D) {
+      if (this.canStrikeNow(player, target, distance)) {
          this.phase = Phase.STRIKE;
       }
    }
 
    private void tickStrike(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
       if (target == null) {
-         this.recoverToBoosting(client, player);
+         this.recoverToBoosting(client, player, true);
          return;
       }
 
@@ -299,10 +305,11 @@ final class DiveComboState {
 
       this.faceForStrike(player, target);
       if (!MaceSwapState.performDiveAttack(client, player, target, this.previousSelectedSlot)) {
-         this.recoverToBoosting(client, player);
+         this.recoverToBoosting(client, player, true);
          return;
       }
 
+      this.failedDiveAttempts = 0;
       this.phase = Phase.POST_STRIKE;
       this.phaseTicks = MultitoolsSettings.divePostStrikeRecoveryTicks;
       this.clientHooks.equipElytraFromHotbar(client);
@@ -383,7 +390,8 @@ final class DiveComboState {
       }
 
       double distanceSq = player.squaredDistanceTo(target);
-      if (player.getVelocity().lengthSquared() > 1.8D && distanceSq < 256.0D) {
+      double horizontalSpeedSq = player.getVelocity().horizontalLengthSquared();
+      if (horizontalSpeedSq > 1.8D && distanceSq < 256.0D && player.getVelocity().y > -0.22D) {
          return;
       }
 
@@ -403,7 +411,16 @@ final class DiveComboState {
       }
    }
 
-   private void recoverToBoosting(MinecraftClient client, ClientPlayerEntity player) {
+   private void recoverToBoosting(MinecraftClient client, ClientPlayerEntity player, boolean countFailure) {
+      if (countFailure) {
+         ++this.failedDiveAttempts;
+         if (this.failedDiveAttempts >= RETARGET_AFTER_FAILED_DIVES) {
+            this.targetEntityId = -1;
+            this.targetRefreshTicks = 0;
+            this.failedDiveAttempts = 0;
+         }
+      }
+
       this.clientHooks.equipElytraFromHotbar(client);
       this.clientHooks.startFallFlyingIfPossible(player);
       this.phase = player.isOnGround() ? Phase.SEARCHING : Phase.BOOSTING;
@@ -460,16 +477,27 @@ final class DiveComboState {
    }
 
    private Vec3d getPredictedApproachPos(LivingEntity target) {
+      ClientPlayerEntity player = MinecraftClient.getInstance().player;
       Vec3d center = target.getBoundingBox().getCenter();
+      if (player == null) {
+         return center.add(0.0D, this.isTargetAirborne(target) ? 0.4D : 5.0D, 0.0D);
+      }
+
+      double predictionTicks = this.computePredictionTicks(player, target, 2.0D, 7.0D);
       Vec3d velocity = target.getVelocity();
-      double heightOffset = this.isTargetAirborne(target) ? 0.4D : 5.0D;
-      return center.add(velocity.multiply(0.45D, 0.2D, 0.45D)).add(0.0D, heightOffset, 0.0D);
+      double heightOffset = this.isTargetAirborne(target) ? 0.5D : 4.5D;
+      return center.add(velocity.multiply(predictionTicks)).add(0.0D, heightOffset, 0.0D);
    }
 
    private Vec3d getPredictedStrikePos(LivingEntity target) {
+      ClientPlayerEntity player = MinecraftClient.getInstance().player;
       Vec3d center = target.getBoundingBox().getCenter();
-      Vec3d velocity = target.getVelocity();
-      return center.add(velocity.multiply(0.35D, 0.15D, 0.35D));
+      if (player == null) {
+         return center;
+      }
+
+      double predictionTicks = this.computePredictionTicks(player, target, 0.35D, 2.25D);
+      return center.add(target.getVelocity().multiply(predictionTicks));
    }
 
    private boolean tryLaunchFromGround(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
@@ -513,6 +541,7 @@ final class DiveComboState {
 
       this.targetEntityId = bestTarget == null ? -1 : bestTarget.getId();
       this.targetRefreshTicks = MultitoolsSettings.diveTargetRefreshTicks;
+      this.failedDiveAttempts = 0;
       return bestTarget;
    }
 
@@ -551,6 +580,53 @@ final class DiveComboState {
       double deltaY = Math.abs(entity.getY() - player.getY());
       double deltaZ = Math.abs(entity.getZ() - player.getZ());
       return deltaX <= TARGET_RANGE && deltaY <= TARGET_RANGE && deltaZ <= TARGET_RANGE;
+   }
+
+   private boolean canStrikeNow(ClientPlayerEntity player, LivingEntity target, double distance) {
+      if (distance > STRIKE_RANGE_MAX || distance < STRIKE_RANGE_MIN) {
+         return false;
+      }
+
+      if (player.getVelocity().y >= -0.08D || player.fallDistance <= 3.0F || player.getY() <= target.getY() + 2.5D) {
+         return false;
+      }
+
+      Vec3d eyePos = player.getEyePos();
+      Vec3d predictedTarget = this.getPredictedStrikePos(target);
+      Vec3d toTarget = predictedTarget.subtract(eyePos);
+      double targetDistance = toTarget.length();
+      if (targetDistance < 1.0E-6D) {
+         return false;
+      }
+
+      Vec3d look = player.getRotationVec(1.0F).normalize();
+      Vec3d direction = toTarget.multiply(1.0D / targetDistance);
+      double alignment = look.dotProduct(direction);
+      if (alignment < STRIKE_ALIGNMENT_MIN) {
+         return false;
+      }
+
+      double forward = toTarget.dotProduct(look);
+      double lateralSq = Math.max(0.0D, toTarget.lengthSquared() - forward * forward);
+      if (lateralSq > STRIKE_MAX_LATERAL_OFFSET * STRIKE_MAX_LATERAL_OFFSET) {
+         return false;
+      }
+
+      Vec3d relativeVelocity = player.getVelocity().subtract(target.getVelocity());
+      double closingSpeed = relativeVelocity.dotProduct(direction);
+      return closingSpeed >= STRIKE_MIN_CLOSING_SPEED;
+   }
+
+   private double computePredictionTicks(ClientPlayerEntity player, LivingEntity target, double minTicks, double maxTicks) {
+      Vec3d toTarget = target.getBoundingBox().getCenter().subtract(player.getEyePos());
+      double distance = toTarget.length();
+      if (distance < 1.0E-6D) {
+         return minTicks;
+      }
+
+      Vec3d relativeVelocity = player.getVelocity().subtract(target.getVelocity());
+      double closingSpeed = Math.max(0.35D, relativeVelocity.length());
+      return MathHelper.clamp(distance / closingSpeed, minTicks, maxTicks);
    }
 
    private enum Phase {

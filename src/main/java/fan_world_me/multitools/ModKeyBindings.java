@@ -19,6 +19,14 @@ public class ModKeyBindings {
       new net.minecraft.client.option.KeyBinding("key.multitools.pearl_catch", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, CATEGORY)
    );
 
+   public static final net.minecraft.client.option.KeyBinding WATER_UTILITY = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.water_utility", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_X, CATEGORY)
+   );
+
+   public static final net.minecraft.client.option.KeyBinding WEB_TRAP = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.web_trap", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_Z, CATEGORY)
+   );
+
    public static final net.minecraft.client.option.KeyBinding SMART_ATTACK = KeyBindingHelper.registerKeyBinding(
       new net.minecraft.client.option.KeyBinding("key.multitools.smart_attack", InputUtil.Type.MOUSE, GLFW.GLFW_MOUSE_BUTTON_5, CATEGORY)
    );
@@ -77,6 +85,14 @@ public class ModKeyBindings {
 
    public static net.minecraft.client.option.KeyBinding getSmartAttack() {
       return SMART_ATTACK;
+   }
+
+   public static net.minecraft.client.option.KeyBinding getWaterUtility() {
+      return WATER_UTILITY;
+   }
+
+   public static net.minecraft.client.option.KeyBinding getWebTrap() {
+      return WEB_TRAP;
    }
 
    public static net.minecraft.client.option.KeyBinding getDiveCombo() {

@@ -48,6 +48,8 @@ final class MultitoolsSettings {
 
    static String spearDashKey = "key.keyboard.c";
    static String pearlCatchKey = "key.keyboard.v";
+   static String waterUtilityKey = "key.keyboard.x";
+   static String webTrapKey = "key.keyboard.z";
    static String smartAttackKey = "key.mouse.5";
    static String diveComboKey = "key.mouse.4";
    static String fireworkBoostKey = "key.keyboard.left.shift";
@@ -107,6 +109,8 @@ final class MultitoolsSettings {
 
          spearDashKey = valueOrDefault(data.spearDashKey, spearDashKey);
          pearlCatchKey = valueOrDefault(data.pearlCatchKey, pearlCatchKey);
+         waterUtilityKey = valueOrDefault(data.waterUtilityKey, waterUtilityKey);
+         webTrapKey = valueOrDefault(data.webTrapKey, webTrapKey);
          smartAttackKey = valueOrDefault(data.smartAttackKey, smartAttackKey);
          diveComboKey = valueOrDefault(data.diveComboKey, diveComboKey);
          fireworkBoostKey = valueOrDefault(data.fireworkBoostKey, fireworkBoostKey);
@@ -157,6 +161,8 @@ final class MultitoolsSettings {
 
       data.spearDashKey = spearDashKey;
       data.pearlCatchKey = pearlCatchKey;
+      data.waterUtilityKey = waterUtilityKey;
+      data.webTrapKey = webTrapKey;
       data.smartAttackKey = smartAttackKey;
       data.diveComboKey = diveComboKey;
       data.fireworkBoostKey = fireworkBoostKey;
@@ -182,6 +188,8 @@ final class MultitoolsSettings {
    static void applyKeybindings() {
       apply(ModKeyBindings.SPEAR_DASH, spearDashKey);
       apply(ModKeyBindings.PEARL_CATCH, pearlCatchKey);
+      apply(ModKeyBindings.WATER_UTILITY, waterUtilityKey);
+      apply(ModKeyBindings.WEB_TRAP, webTrapKey);
       apply(ModKeyBindings.SMART_ATTACK, smartAttackKey);
       apply(ModKeyBindings.DIVE_COMBO, diveComboKey);
       apply(ModKeyBindings.FIREWORK_BOOST, fireworkBoostKey);
@@ -200,6 +208,8 @@ final class MultitoolsSettings {
    static void captureKeybindings() {
       spearDashKey = ModKeyBindings.SPEAR_DASH.getBoundKeyTranslationKey();
       pearlCatchKey = ModKeyBindings.PEARL_CATCH.getBoundKeyTranslationKey();
+      waterUtilityKey = ModKeyBindings.WATER_UTILITY.getBoundKeyTranslationKey();
+      webTrapKey = ModKeyBindings.WEB_TRAP.getBoundKeyTranslationKey();
       smartAttackKey = ModKeyBindings.SMART_ATTACK.getBoundKeyTranslationKey();
       diveComboKey = ModKeyBindings.DIVE_COMBO.getBoundKeyTranslationKey();
       fireworkBoostKey = ModKeyBindings.FIREWORK_BOOST.getBoundKeyTranslationKey();
@@ -247,6 +257,8 @@ final class MultitoolsSettings {
 
       spearDashKey = "key.keyboard.c";
       pearlCatchKey = "key.keyboard.v";
+      waterUtilityKey = "key.keyboard.x";
+      webTrapKey = "key.keyboard.z";
       smartAttackKey = "key.mouse.5";
       diveComboKey = "key.mouse.4";
       fireworkBoostKey = "key.keyboard.left.shift";
@@ -302,6 +314,8 @@ final class MultitoolsSettings {
 
       String spearDashKey = "key.keyboard.c";
       String pearlCatchKey = "key.keyboard.v";
+      String waterUtilityKey = "key.keyboard.x";
+      String webTrapKey = "key.keyboard.z";
       String smartAttackKey = "key.mouse.5";
       String diveComboKey = "key.mouse.4";
       String fireworkBoostKey = "key.keyboard.left.shift";

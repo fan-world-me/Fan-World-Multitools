@@ -47,6 +47,19 @@ Output jar:
 
 - `build/libs/multitools-5.0.2.jar`
 
+## GitHub
+
+For GitHub releases, attach the built jar from `build/libs/` and keep the version in `build.gradle` and this README aligned.
+
+If you want signed release tags, create them with GPG before pushing:
+
+```powershell
+git tag -s v5.0.2 -m "multitools 5.0.2"
+git push origin v5.0.2
+```
+
+If you publish release checksums, sign or verify those alongside the jar so users can confirm the artifact they download.
+
 ## Development
 
 Run the client:
