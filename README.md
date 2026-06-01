@@ -45,7 +45,7 @@ Client-side Fabric mod for Minecraft `1.21.11` focused on hotbar automation, ely
 
 Output jar:
 
-- `build/libs/multitools-5.0.2.jar`
+- `build/libs/multitools-5.0.3.jar`
 
 ## GitHub
 
@@ -54,8 +54,8 @@ For GitHub releases, attach the built jar from `build/libs/` and keep the versio
 If you want signed release tags, create them with GPG before pushing:
 
 ```powershell
-git tag -s v5.0.2 -m "multitools 5.0.2"
-git push origin v5.0.2
+git tag -s v5.0.3 -m "multitools 5.0.3"
+git push origin v5.0.3
 ```
 
 If you publish release checksums, sign or verify those alongside the jar so users can confirm the artifact they download.
