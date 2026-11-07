@@ -123,7 +123,7 @@ final class MultitoolsSettings {
          selfBuffsKey = valueOrDefault(data.selfBuffsKey, selfBuffsKey);
          saturationKey = valueOrDefault(data.saturationKey, saturationKey);
          killNonPlayersKey = valueOrDefault(data.killNonPlayersKey, killNonPlayersKey);
-      } catch (IOException ignored) {
+      } catch (Exception ignored) {
       }
    }
 
@@ -181,7 +181,7 @@ final class MultitoolsSettings {
          try (Writer writer = Files.newBufferedWriter(CONFIG_PATH)) {
             GSON.toJson(data, writer);
          }
-      } catch (IOException ignored) {
+      } catch (Exception ignored) {
       }
    }
 

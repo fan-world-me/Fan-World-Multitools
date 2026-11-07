@@ -25,6 +25,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.potion.Potions;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
@@ -404,7 +405,7 @@ public class MultitoolsClient implements ClientModInitializer {
       if (this.spearSwapBackDelay >= 0) {
          --this.spearSwapBackDelay;
          if (this.spearSwapBackDelay == 0) {
-            client.player.getInventory().setSelectedSlot(this.previousSpearSlot);
+            MaceSwapState.setSelectedHotbarSlot(client, client.player, this.previousSpearSlot);
          }
       }
 
@@ -422,7 +423,12 @@ public class MultitoolsClient implements ClientModInitializer {
             continue;
          }
 
-         this.simulateHit(client);
+         MaceSwapState.setAutomationSuppressed(true);
+          try {
+             this.simulateHit(client);
+          } finally {
+             MaceSwapState.setAutomationSuppressed(false);
+          }
          this.spearSwapBackDelay = MultitoolsSettings.spearSwapBackDelayTicks;
          this.spearBindDelay = MultitoolsSettings.spearKeyCooldownTicks;
       }
@@ -476,10 +482,10 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       if (player.getVelocity().y > SMART_ATTACK_VERTICAL_SPEED) {
-         return;
-      }
+          return;
+       }
 
-      Entity target = this.findSmartAttackTarget(client);
+       Entity target = this.findSmartAttackTarget(client);
       if (!(target instanceof LivingEntity)) {
          return;
       }
@@ -495,7 +501,34 @@ public class MultitoolsClient implements ClientModInitializer {
    }
 
    private void tickWaterUtilityHold(MinecraftClient client) {
-      this.lastWaterUtilityPressed = ModKeyBindings.getWaterUtility().isPressed();
+      boolean pressed = ModKeyBindings.getWaterUtility().isPressed();
+      this.lastWaterUtilityPressed = pressed;
+
+      ClientPlayerEntity player = client.player;
+      if (player == null || client.world == null) {
+         return;
+      }
+
+      // Auto water-drop while X is held and falling (not gliding), no fluid already placed
+      if (pressed
+            && this.temporaryFluidMode == TemporaryFluidMode.NONE
+            && !player.isOnGround()
+            && !player.isGliding()
+            && this.shouldAttemptWaterDrop(player)) {
+
+         // Check if there's a flower/grass/plant blocking water placement
+         BlockPos supportPos = this.findSupportBlockBelowPlayer(player, 6.0D);
+         if (supportPos != null) {
+            BlockState blockAbove = client.world.getBlockState(supportPos.up());
+            boolean blocked = !blockAbove.isAir() && blockAbove.getFluidState().isEmpty();
+            if (blocked) {
+               player.sendMessage(Text.literal("§e⚠ Move — plant/block below!"), true);
+               return;
+            }
+         }
+
+         this.tryPlaceWaterBelowSelf(client, TemporaryFluidMode.WATER_DROP);
+      }
    }
 
    private void tickWebTrapHold(MinecraftClient client) {
@@ -503,7 +536,36 @@ public class MultitoolsClient implements ClientModInitializer {
    }
 
    private void handleWaterUtilityTap(MinecraftClient client) {
-      return;
+      ClientPlayerEntity player = client.player;
+      if (player == null || client.world == null) {
+         return;
+      }
+
+      boolean inFire = player.isOnFire()
+         || client.world.getBlockState(player.getBlockPos()).isOf(Blocks.FIRE)
+         || client.world.getBlockState(player.getBlockPos()).isOf(Blocks.SOUL_FIRE)
+         || client.world.getBlockState(player.getBlockPos().down()).isOf(Blocks.FIRE)
+         || client.world.getBlockState(player.getBlockPos().down()).isOf(Blocks.SOUL_FIRE);
+
+      boolean falling = !player.isOnGround() && player.getVelocity().y < -0.3D;
+
+      if (inFire) {
+         this.tryPlaceWaterBelowSelf(client, TemporaryFluidMode.GROUND_EXTINGUISH);
+         return;
+      }
+
+      if (falling) {
+         this.tryPlaceWaterBelowSelf(client, TemporaryFluidMode.WATER_DROP);
+         return;
+      }
+
+      LivingEntity target = this.findBestAttackTarget(client, 6.0D, 4.0D) instanceof LivingEntity living ? living : null;
+      if (target != null && this.findInventorySlot(player, Items.LAVA_BUCKET) >= 0) {
+         this.tryPlaceLavaUnderTarget(client);
+         return;
+      }
+
+      this.tryPlaceWaterBelowSelf(client, TemporaryFluidMode.WATER_DROP);
    }
 
    private void handleWebTrapTap(MinecraftClient client) {
@@ -528,8 +590,13 @@ public class MultitoolsClient implements ClientModInitializer {
 
       ++this.temporaryFluidTicks;
       if (this.temporaryFluidReturnRequested && this.temporaryFluidReturnTimeoutTicks > 0) {
-         --this.temporaryFluidReturnTimeoutTicks;
-      }
+          --this.temporaryFluidReturnTimeoutTicks;
+       }
+
+       if (this.temporaryFluidReturnRequested && this.temporaryFluidReturnTimeoutTicks <= 0) {
+          this.clearTemporaryFluid();
+          return;
+       }
 
       if (this.temporaryFluidPickupDelayTicks > 0) {
          --this.temporaryFluidPickupDelayTicks;
@@ -539,10 +606,6 @@ public class MultitoolsClient implements ClientModInitializer {
       if (!fluidPresent && !this.temporaryFluidReturnRequested) {
          this.clearTemporaryFluid();
          return;
-      }
-
-      if (this.temporaryFluidReturnRequested && this.temporaryFluidPickupDelayTicks <= 0) {
-         this.tryPickupTemporaryFluid(client);
       }
 
       if (this.temporaryFluidPickupDelayTicks > 0) {
@@ -645,7 +708,7 @@ public class MultitoolsClient implements ClientModInitializer {
 
    private void tickAutoTotem(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
-      if (!MultitoolsSettings.autoTotemEnabled || player == null) {
+      if (!MultitoolsSettings.autoTotemEnabled || player == null || client.currentScreen != null) {
          return;
       }
 
@@ -1054,7 +1117,7 @@ public class MultitoolsClient implements ClientModInitializer {
 
    private boolean tryPlaceWaterBelowSelf(MinecraftClient client, TemporaryFluidMode mode) {
       ClientPlayerEntity player = client.player;
-      if (player == null || this.temporaryFluidMode != TemporaryFluidMode.NONE) {
+      if (player == null || client.world == null || this.temporaryFluidMode != TemporaryFluidMode.NONE) {
          return false;
       }
 
@@ -1073,8 +1136,13 @@ public class MultitoolsClient implements ClientModInitializer {
          return false;
       }
 
-      float yaw = player.getYaw();
-      if (!this.useInventoryItemAtAnglesConfirmed(client, player, waterBucketSlot, STRAIGHT_DOWN_PITCH, yaw, Items.BUCKET)) {
+      Vec3d hitVec = Vec3d.ofCenter(supportPos).add(0.0D, 0.5D, 0.0D);
+      BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, supportPos, false);
+      this.placeBucketViaInteractBlock(client, player, waterBucketSlot, hit);
+
+      boolean placed = client.world.getBlockState(sourcePos).isOf(Blocks.WATER)
+            || !client.world.getBlockState(sourcePos).getFluidState().isEmpty();
+      if (!placed) {
          return false;
       }
 
@@ -1090,13 +1158,16 @@ public class MultitoolsClient implements ClientModInitializer {
 
    private boolean tryPlaceLavaUnderTarget(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
-      if (player == null || this.temporaryFluidMode != TemporaryFluidMode.NONE) {
+      if (player == null || client.world == null || this.temporaryFluidMode != TemporaryFluidMode.NONE) {
          return false;
       }
 
-      LivingEntity target = this.findPriorityTrapTarget(client);
-      if (target == null) {
-         return false;
+      LivingEntity target = this.findBestAttackTarget(client, 12.0D, 6.0D) instanceof LivingEntity living ? living : null;
+      if (target == null && client.crosshairTarget != null && client.crosshairTarget.getType() == HitResult.Type.ENTITY) {
+         net.minecraft.util.hit.EntityHitResult entityHit = (net.minecraft.util.hit.EntityHitResult) client.crosshairTarget;
+         if (entityHit.getEntity() instanceof LivingEntity livingEntity) {
+            target = livingEntity;
+         }
       }
 
       int lavaBucketSlot = this.findInventorySlot(player, Items.LAVA_BUCKET);
@@ -1104,12 +1175,26 @@ public class MultitoolsClient implements ClientModInitializer {
          return false;
       }
 
-      BlockPos placementPos = this.findBlockUnderTarget(client, target, 14.0D);
+      BlockPos placementPos;
+      if (target != null) {
+         placementPos = this.findBlockUnderTarget(client, target, 14.0D);
+      } else if (client.crosshairTarget != null && client.crosshairTarget.getType() == HitResult.Type.BLOCK) {
+         placementPos = ((BlockHitResult) client.crosshairTarget).getBlockPos().up();
+      } else {
+         return false;
+      }
       if (placementPos == null || !this.canUseTemporaryFluidAt(client, placementPos, false)) {
          return false;
       }
 
-      if (!this.useInventoryItemOnBlockFlexibleConfirmed(client, player, lavaBucketSlot, placementPos.down(), Items.BUCKET)) {
+      BlockPos supportPos = placementPos.down();
+      Vec3d hitVec = Vec3d.ofCenter(supportPos).add(0.0D, 0.5D, 0.0D);
+      BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, supportPos, false);
+      this.placeBucketViaInteractBlock(client, player, lavaBucketSlot, hit);
+
+      boolean placed = client.world.getBlockState(placementPos).isOf(Blocks.LAVA)
+            || !client.world.getBlockState(placementPos).getFluidState().isEmpty();
+      if (!placed) {
          return false;
       }
 
@@ -1123,13 +1208,52 @@ public class MultitoolsClient implements ClientModInitializer {
       return true;
    }
 
+   /**
+    * Places or picks up a fluid by briefly rotating the player's view to face the target block,
+    * calling interactItem (which reads crosshairTarget from the rotated view), then restoring look.
+    */
+   private void placeBucketViaInteractBlock(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, BlockHitResult hit) {
+      if (client.interactionManager == null || client.getNetworkHandler() == null) {
+         return;
+      }
+
+      Vec3d eye = player.getEyePos();
+      Vec3d target = hit.getPos();
+      Vec3d delta = target.subtract(eye);
+      double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+      float aimYaw = (float)(Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0D);
+      float aimPitch = (float)(-Math.toDegrees(Math.atan2(delta.y, horizontal)));
+
+      float prevYaw = player.getYaw();
+      float prevPitch = player.getPitch();
+      HitResult prevCrosshair = client.crosshairTarget;
+
+      player.setYaw(aimYaw);
+      player.setPitch(aimPitch);
+      client.crosshairTarget = hit;
+
+      // Send look packet so server knows where we're facing
+      client.getNetworkHandler().sendPacket(
+         new PlayerMoveC2SPacket.LookAndOnGround(aimYaw, aimPitch, player.isOnGround(), player.horizontalCollision)
+      );
+
+      this.runWithInventorySlotSelected(client, player, inventorySlot, () -> {
+         client.interactionManager.interactItem(player, Hand.MAIN_HAND);
+         player.swingHand(Hand.MAIN_HAND);
+      });
+
+      player.setYaw(prevYaw);
+      player.setPitch(prevPitch);
+      client.crosshairTarget = prevCrosshair;
+   }
+
    private boolean trySwordWebTrap(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
       if (player == null) {
          return false;
       }
 
-      LivingEntity target = this.findPriorityTrapTarget(client);
+      LivingEntity target = this.findBestAttackTarget(client, 8.0D, 5.0D) instanceof LivingEntity living ? living : null;
       if (target == null) {
          return false;
       }
@@ -1150,14 +1274,9 @@ public class MultitoolsClient implements ClientModInitializer {
          return true;
       }
 
-      this.useInventoryItemOnBlock(client, player, cobwebSlot, placementPos.down(), Direction.UP, STRAIGHT_DOWN_PITCH);
-      this.temporaryFluidMode = TemporaryFluidMode.COBWEB_WATER;
-      this.temporaryFluidPos = placementPos;
-      this.temporaryFluidExpectedBucketItem = Items.WATER_BUCKET;
-      this.temporaryFluidTicks = 0;
-      this.temporaryFluidPickupDelayTicks = 1;
-      this.temporaryFluidReturnRequested = false;
-      this.temporaryFluidReturnTimeoutTicks = 0;
+      if (!this.useInventoryItemOnBlock(client, player, cobwebSlot, placementPos.down(), Direction.UP, STRAIGHT_DOWN_PITCH)) {
+         this.useInventoryItemOnBlockFlexible(client, player, cobwebSlot, placementPos);
+      }
       return true;
    }
 
@@ -1284,7 +1403,10 @@ public class MultitoolsClient implements ClientModInitializer {
 
       Item expectedFilledBucket = this.temporaryFluidExpectedBucketItem;
 
-      this.useInventoryItemOnBlockFlexibleConfirmed(client, player, emptyBucketSlot, this.temporaryFluidPos, expectedFilledBucket);
+      // Pick up fluid: aim at the fluid block and use interactItem (same as placement)
+      Vec3d hitVec = Vec3d.ofCenter(this.temporaryFluidPos);
+      BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, this.temporaryFluidPos, false);
+      this.placeBucketViaInteractBlock(client, player, emptyBucketSlot, hit);
 
       boolean fluidPresent = this.isTemporaryFluidStillPresent(client);
       boolean bucketReturned = player.getInventory().getStack(emptyBucketSlot).isOf(expectedFilledBucket);
@@ -1435,7 +1557,11 @@ public class MultitoolsClient implements ClientModInitializer {
          float previousPitch = player.getPitch();
          float previousYaw = player.getYaw();
          player.setYaw(yaw);
-         player.setPitch(MathHelper.clamp(pitch, -90.0F, 90.0F));
+         float clampedPitch = MathHelper.clamp(pitch, -90.0F, 90.0F);
+         player.setPitch(clampedPitch);
+         if (client.getNetworkHandler() != null) {
+            client.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(yaw, clampedPitch, player.isOnGround(), player.horizontalCollision));
+         }
          ActionResult result = client.interactionManager.interactItem(player, Hand.MAIN_HAND);
          if (result.isAccepted()) {
             player.swingHand(Hand.MAIN_HAND);
@@ -1511,6 +1637,12 @@ public class MultitoolsClient implements ClientModInitializer {
    private float computeYawTo(Vec3d source, Vec3d target) {
       Vec3d delta = target.subtract(source);
       return (float)(Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0D);
+   }
+
+   private float computePitchTo(Vec3d source, Vec3d target) {
+      Vec3d delta = target.subtract(source);
+      double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+      return (float)(-Math.toDegrees(Math.atan2(delta.y, horizontal)));
    }
 
    private int findHotbarSlot(ClientPlayerEntity player, Item item) {
