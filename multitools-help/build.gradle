@@ -1,0 +1,31 @@
+plugins {
+    id 'fabric-loom' version "${loom_version}"
+}
+
+version = "1.0.0"
+group = project.maven_group
+
+base {
+    archivesName = "multitools-help"
+}
+
+repositories {
+    maven { url = 'https://maven.fabricmc.net/' }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}

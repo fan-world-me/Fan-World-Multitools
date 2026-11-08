@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "multitoolshelp",
+  "version": "1.0.0",
+  "name": "Multitools Help",
+  "description": "Server-side mod providing Nuke, Stab and Railgun commands for multitools client mod.",
+  "authors": [
+    "fan_world_me"
+  ],
+  "license": "GPL-3.0-only",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "fan_world_me.multitoolshelp.MultitoolsHelp"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.2",
+    "minecraft": "1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
