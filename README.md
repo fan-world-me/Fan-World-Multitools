@@ -7,23 +7,26 @@
 ██║╚██╔╝██║██║   ██║██║     ██║   ██║   ██║   ██║   ██║██║   ██║██║     ╚════██║
 ██║ ╚═╝ ██║╚██████╔╝███████╗██║   ██║   ██║   ╚██████╔╝╚██████╔╝███████╗███████║
 ╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝   ╚═╝   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚══════╝
-  Fan-World Multitools v6.0.0 — Fabric client mod for Minecraft 1.21.11
+  Fan-World Multitools v7.0.0 — Fabric client mod for Minecraft 1.21.11
 ```
 
 Client-side Fabric mod for Minecraft `1.21.11` — hotbar automation, elytra movement helpers, mace PvP combos, and utility keybinds in one package.
 
+> **Latest release:** [v7.0.0](https://github.com/fan-world-me/multitools/releases/tag/7.0.0)
+
 ### 💭 More about this mod
 
 - ⚔️ **SpearDash** — swap to a Lunge spear, attack, restore previous slot instantly
-- 🎯 **PearlCatch** — ender pearl follow-up flow with timing precision
-- 🪂 **DiveCombo** — full elytra-mace combo loop via state machine (start / cancel)
-- 🗡️ **SmartAttack** — falling attack assist with player-first target priority and threat detection
-- 🌊 **WaterUtility** — smart bucket placement for fluid extinguish or lava control
-- 🕸️ **WebTrap** — cobweb placement utility
+- 🎯 **PearlCatch** — ender pearl follow-up with Wind Charge assist and auto pitch correction
+- 🪂 **DiveCombo** — full elytra-mace combo loop via state machine (launch → boost → dive → strike → re-approach)
+- 🗡️ **SmartAttack** — falling attack assist with player-first target priority and auto elytra removal
+- 🌊 **WaterUtility** — smart bucket: extinguish fire, break fall, place lava under enemies
+- 🕸️ **WebTrap** — cobweb behind target + sword follow-up in melee range
 - 🎆 **FireworkBoost** — fire fireworks from offhand, hotbar, or inventory swap
-- 🪶 **AutoElytraSwap** — auto equip elytra / restore chestplate on landing
+- 🪶 **AutoElytraSwap** — auto equip elytra / restore chestplate; threat detection swaps armor vs crystals, TNT, and mace divers
 - 💀 **AutoTotem** — keeps Totem of Undying in offhand automatically
-- ⚙️ **Mod Menu config** — in-game GUI for all toggles via Mod Menu integration
+- 🤖 **Auto Mace Swap** (passive) — intercepts every attack, swaps to mace; axe+mace combo to break shields
+- ⚙️ **Mod Menu config** — in-game GUI for all toggles and keybinds via Mod Menu integration
 
 ---
 
@@ -32,18 +35,20 @@ Client-side Fabric mod for Minecraft `1.21.11` — hotbar automation, elytra mov
 | Key | Action |
 |---|---|
 | `C` | **SpearDash** — swap to Lunge spear, hit, restore slot |
-| `V` | **PearlCatch** — pearl follow-up flow |
+| `V` | **PearlCatch** — pearl + Wind Charge follow-up with auto pitch assist |
 | `Mouse 4` | **DiveCombo** — start or cancel elytra-mace combo loop |
-| `Mouse 5` | **SmartAttack** — falling attack assist |
-| `X` | **WaterUtility** — smart bucket placement |
-| `Z` | **WebTrap** — cobweb placement |
-| `Left Shift` | **FireworkBoost** — fire firework (offhand / hotbar / inventory) |
+| `Mouse 5` | **SmartAttack** — falling attack assist with auto elytra removal |
+| `X` | **WaterUtility** — extinguish / break fall / place lava under target |
+| `Z` | **WebTrap** — cobweb behind target + sword strike in range |
+| `Left Shift` | **FireworkBoost** — fire firework while gliding (offhand / hotbar / inventory) |
 | `` ` `` | **Toggle AutoElytraSwap** — enable / disable auto elytra equip |
-| `R` | **AutoTotem** — keep totem in offhand |
-| `L` | `/ck load main` — load main loadout command |
-| `F6` | Drop/move item if needed → `/givef railgun straight 1` |
-| `F7` | Drop/move item if needed → `/givef nuke 1 11` |
-| `F8` | Drop item if needed → `/givef stab 1` |
+| `R` | **AutoTotem** — toggle auto-keep totem in offhand |
+| `L` | `/ck load main` — load main loadout |
+| `K` | `/ck load crystall` — load crystal PvP loadout |
+| `←` | `/ck load ender-chest` — load ender chest loadout |
+| `F6` | `/givef railgun straight 1` — railgun (requires multitools-help on server) |
+| `F7` | `/givef nuke 1 11` — nuke shot (requires multitools-help on server) |
+| `F8` | `/givef stab 1` — stab shot (requires multitools-help on server) |
 | `F9` | Throw self-buff splash potions downward |
 | `F10` | `/effect give @p minecraft:saturation infinite 255 false` |
 | `F12` | `/kill @e[type=!minecraft:player]` |
@@ -71,19 +76,27 @@ spearswap/
 ├── src/main/java/fan_world_me/multitools/
 │   ├── MultitoolsClient.java         — main client mod initializer, all keybind logic
 │   ├── ModKeyBindings.java           — keybind registration (GLFW keys + mouse buttons)
-│   ├── DiveComboState.java           — elytra-mace combo state machine
-│   ├── MaceSwapState.java            — hidden mace/axe → mace follow-up swap logic
+│   ├── DiveComboState.java           — elytra-mace combo state machine (9 phases)
+│   ├── MaceSwapState.java            — passive mace/axe swap + shield-break combo logic
 │   ├── MultitoolsSettings.java       — persistent settings (load/save to disk)
 │   ├── MultitoolsSettingsScreen.java — in-game config GUI (Mod Menu integration)
 │   ├── MultitoolsModMenu.java        — Mod Menu entry point
 │   └── mixin/                        — Mixin patches (client-side only)
+├── multitools-help/                  — optional server-side companion mod
+│   └── src/main/java/fan_world_me/multitoolshelp/
+│       ├── MultitoolsHelp.java       — server mod initializer
+│       ├── GivefCommand.java         — /givef command (nuke / stab / railgun items)
+│       ├── NukeLogic.java            — TNT ring spawner
+│       ├── StabLogic.java            — instant TNT column detonator
+│       ├── RailgunLogic.java         — high-speed arrow volley
+│       └── StrikeScheduler.java     — batched tick scheduler (no lag spikes)
 ├── src/main/resources/
 │   ├── fabric.mod.json               — mod metadata
 │   ├── multitools.mixins.json        — server mixin config
 │   ├── multitools.client.mixins.json — client mixin config
 │   └── assets/multitools/lang/       — i18n strings
 ├── build.gradle                      — Gradle build script (Fabric Loom)
-├── gradle.properties                 — versions: mod 6.0.0, MC 1.21.11, Java 21
+├── gradle.properties                 — versions: mod 7.0.0, MC 1.21.11, Java 21
 └── gradlew.bat                       — Gradle wrapper
 ```
 
@@ -95,7 +108,7 @@ spearswap/
 .\gradlew.bat build
 ```
 
-Output jar: `build/libs/multitools-6.0.0.jar`
+Output jar: `build/libs/multitools-7.0.0.jar`
 
 Run the client for development:
 
@@ -110,7 +123,8 @@ Run the client for development:
 1. Install [Fabric Loader](https://fabricmc.net/use/installer/) `0.18.2+` for Minecraft `1.21.11`
 2. Install [Fabric API](https://modrinth.com/mod/fabric-api)
 3. Optionally install [Mod Menu](https://modrinth.com/mod/modmenu) for the in-game config screen
-4. Drop `multitools-6.0.0.jar` into your `.minecraft/mods/` folder
+4. Drop `multitools-7.0.0.jar` into your `.minecraft/mods/` folder
+5. *(Optional)* Drop `multitools-help-1.0.0.jar` into your **server's** `mods/` folder to enable `/givef` commands
 
 ---
 
