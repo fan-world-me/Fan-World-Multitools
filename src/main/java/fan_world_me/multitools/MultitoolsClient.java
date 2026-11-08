@@ -141,6 +141,8 @@ public class MultitoolsClient implements ClientModInitializer {
       ModKeyBindings.getSelfBuffs();
       ModKeyBindings.getSaturation();
       ModKeyBindings.getKillNonPlayers();
+      ModKeyBindings.getLoadCrystal();
+      ModKeyBindings.getLoadEnderChest();
       MultitoolsSettings.applyKeybindings();
 
       UseItemCallback.EVENT.register((player, world, hand) -> {
@@ -237,6 +239,18 @@ public class MultitoolsClient implements ClientModInitializer {
             if (MultitoolsSettings.killNonPlayersEnabled) {
                client.player.networkHandler.sendChatCommand("kill @e[type=!minecraft:player]");
                client.player.networkHandler.sendChatCommand("kill @e[type=!minecraft:player]");
+            }
+         }
+
+         while (ModKeyBindings.getLoadCrystal().wasPressed()) {
+            if (MultitoolsSettings.loadCrystalEnabled) {
+               client.player.networkHandler.sendChatCommand("ck load crystall");
+            }
+         }
+
+         while (ModKeyBindings.getLoadEnderChest().wasPressed()) {
+            if (MultitoolsSettings.loadEnderChestEnabled) {
+               client.player.networkHandler.sendChatCommand("ck load ender-chest");
             }
          }
 

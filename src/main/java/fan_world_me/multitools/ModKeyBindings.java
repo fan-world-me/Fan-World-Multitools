@@ -75,6 +75,14 @@ public class ModKeyBindings {
       new net.minecraft.client.option.KeyBinding("key.multitools.kill_non_players", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F12, CATEGORY)
    );
 
+   public static final net.minecraft.client.option.KeyBinding LOAD_CRYSTAL = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.load_crystal", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_K, CATEGORY)
+   );
+
+   public static final net.minecraft.client.option.KeyBinding LOAD_ENDER_CHEST = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.load_ender_chest", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_LEFT, CATEGORY)
+   );
+
    public static net.minecraft.client.option.KeyBinding getSpearDash() {
       return SPEAR_DASH;
    }
@@ -137,5 +145,13 @@ public class ModKeyBindings {
 
    public static net.minecraft.client.option.KeyBinding getKillNonPlayers() {
       return KILL_NON_PLAYERS;
+   }
+
+   public static net.minecraft.client.option.KeyBinding getLoadCrystal() {
+      return LOAD_CRYSTAL;
+   }
+
+   public static net.minecraft.client.option.KeyBinding getLoadEnderChest() {
+      return LOAD_ENDER_CHEST;
    }
 }

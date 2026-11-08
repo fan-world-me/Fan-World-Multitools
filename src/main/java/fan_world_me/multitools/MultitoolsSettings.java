@@ -35,6 +35,8 @@ final class MultitoolsSettings {
    static boolean selfBuffsEnabled = true;
    static boolean saturationEnabled = true;
    static boolean killNonPlayersEnabled = true;
+   static boolean loadCrystalEnabled = true;
+   static boolean loadEnderChestEnabled = true;
    static boolean diveComboAvoidObstacles = true;
    static boolean dropHeldItemBeforeGiveCommand = true;
 
@@ -66,6 +68,8 @@ final class MultitoolsSettings {
    static String selfBuffsKey = "key.keyboard.f9";
    static String saturationKey = "key.keyboard.f10";
    static String killNonPlayersKey = "key.keyboard.f12";
+   static String loadCrystalKey = "key.keyboard.k";
+   static String loadEnderChestKey = "key.keyboard.left";
 
    private MultitoolsSettings() {
    }
@@ -96,6 +100,8 @@ final class MultitoolsSettings {
          selfBuffsEnabled = data.selfBuffsEnabled;
          saturationEnabled = data.saturationEnabled;
          killNonPlayersEnabled = data.killNonPlayersEnabled;
+         loadCrystalEnabled = data.loadCrystalEnabled;
+         loadEnderChestEnabled = data.loadEnderChestEnabled;
          diveComboAvoidObstacles = data.diveComboAvoidObstacles;
          dropHeldItemBeforeGiveCommand = data.dropHeldItemBeforeGiveCommand;
 
@@ -129,6 +135,8 @@ final class MultitoolsSettings {
          selfBuffsKey = valueOrDefault(data.selfBuffsKey, selfBuffsKey);
          saturationKey = valueOrDefault(data.saturationKey, saturationKey);
          killNonPlayersKey = valueOrDefault(data.killNonPlayersKey, killNonPlayersKey);
+         loadCrystalKey = valueOrDefault(data.loadCrystalKey, loadCrystalKey);
+         loadEnderChestKey = valueOrDefault(data.loadEnderChestKey, loadEnderChestKey);
       } catch (Exception ignored) {
       }
    }
@@ -150,6 +158,8 @@ final class MultitoolsSettings {
       data.selfBuffsEnabled = selfBuffsEnabled;
       data.saturationEnabled = saturationEnabled;
       data.killNonPlayersEnabled = killNonPlayersEnabled;
+      data.loadCrystalEnabled = loadCrystalEnabled;
+      data.loadEnderChestEnabled = loadEnderChestEnabled;
       data.diveComboAvoidObstacles = diveComboAvoidObstacles;
       data.dropHeldItemBeforeGiveCommand = dropHeldItemBeforeGiveCommand;
 
@@ -181,6 +191,8 @@ final class MultitoolsSettings {
       data.selfBuffsKey = selfBuffsKey;
       data.saturationKey = saturationKey;
       data.killNonPlayersKey = killNonPlayersKey;
+      data.loadCrystalKey = loadCrystalKey;
+      data.loadEnderChestKey = loadEnderChestKey;
 
       try {
          Files.createDirectories(CONFIG_PATH.getParent());
@@ -208,6 +220,8 @@ final class MultitoolsSettings {
       apply(ModKeyBindings.SELF_BUFFS, selfBuffsKey);
       apply(ModKeyBindings.SATURATION, saturationKey);
       apply(ModKeyBindings.KILL_NON_PLAYERS, killNonPlayersKey);
+      apply(ModKeyBindings.LOAD_CRYSTAL, loadCrystalKey);
+      apply(ModKeyBindings.LOAD_ENDER_CHEST, loadEnderChestKey);
       KeyBinding.updateKeysByCode();
    }
 
@@ -228,6 +242,8 @@ final class MultitoolsSettings {
       selfBuffsKey = ModKeyBindings.SELF_BUFFS.getBoundKeyTranslationKey();
       saturationKey = ModKeyBindings.SATURATION.getBoundKeyTranslationKey();
       killNonPlayersKey = ModKeyBindings.KILL_NON_PLAYERS.getBoundKeyTranslationKey();
+      loadCrystalKey = ModKeyBindings.LOAD_CRYSTAL.getBoundKeyTranslationKey();
+      loadEnderChestKey = ModKeyBindings.LOAD_ENDER_CHEST.getBoundKeyTranslationKey();
    }
 
    static void restoreDefaults() {
@@ -246,6 +262,8 @@ final class MultitoolsSettings {
       selfBuffsEnabled = true;
       saturationEnabled = true;
       killNonPlayersEnabled = true;
+      loadCrystalEnabled = true;
+      loadEnderChestEnabled = true;
       diveComboAvoidObstacles = true;
       dropHeldItemBeforeGiveCommand = true;
 
@@ -277,6 +295,8 @@ final class MultitoolsSettings {
       selfBuffsKey = "key.keyboard.f9";
       saturationKey = "key.keyboard.f10";
       killNonPlayersKey = "key.keyboard.f12";
+      loadCrystalKey = "key.keyboard.k";
+      loadEnderChestKey = "key.keyboard.left";
    }
 
    private static void apply(KeyBinding keyBinding, String translationKey) {
@@ -303,6 +323,8 @@ final class MultitoolsSettings {
       boolean selfBuffsEnabled = true;
       boolean saturationEnabled = true;
       boolean killNonPlayersEnabled = true;
+      boolean loadCrystalEnabled = true;
+      boolean loadEnderChestEnabled = true;
       boolean diveComboAvoidObstacles = true;
       boolean dropHeldItemBeforeGiveCommand = true;
 
@@ -334,5 +356,7 @@ final class MultitoolsSettings {
       String selfBuffsKey = "key.keyboard.f9";
       String saturationKey = "key.keyboard.f10";
       String killNonPlayersKey = "key.keyboard.f12";
+      String loadCrystalKey = "key.keyboard.k";
+      String loadEnderChestKey = "key.keyboard.left";
    }
 }
