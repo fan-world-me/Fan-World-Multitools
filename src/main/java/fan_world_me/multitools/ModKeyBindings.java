@@ -51,8 +51,8 @@ public class ModKeyBindings {
       new net.minecraft.client.option.KeyBinding("key.multitools.load_main", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_L, CATEGORY)
    );
 
-   public static final net.minecraft.client.option.KeyBinding SETTINGS = KeyBindingHelper.registerKeyBinding(
-      new net.minecraft.client.option.KeyBinding("key.multitools.settings", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, CATEGORY)
+   public static final net.minecraft.client.option.KeyBinding GIVE_RAILGUN = KeyBindingHelper.registerKeyBinding(
+      new net.minecraft.client.option.KeyBinding("key.multitools.give_railgun", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, CATEGORY)
    );
 
    public static final net.minecraft.client.option.KeyBinding GIVE_NUKE = KeyBindingHelper.registerKeyBinding(
@@ -115,8 +115,8 @@ public class ModKeyBindings {
       return LOAD_MAIN;
    }
 
-   public static net.minecraft.client.option.KeyBinding getSettings() {
-      return SETTINGS;
+   public static net.minecraft.client.option.KeyBinding getGiveRailgun() {
+      return GIVE_RAILGUN;
    }
 
    public static net.minecraft.client.option.KeyBinding getGiveNuke() {
@@ -139,4 +139,3 @@ public class ModKeyBindings {
       return KILL_NON_PLAYERS;
    }
 }
-

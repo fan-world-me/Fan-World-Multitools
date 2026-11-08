@@ -23,7 +23,9 @@ public final class MaceSwapState {
    private static boolean performingFollowUp = false;
    private static boolean queuedSwordSwap = false;
    private static int queuedTargetId = -1;
-   private static boolean automationSuppressed = false;
+   // Счётчик, а не boolean: DiveCombo, SpearDash и WebTrap могут подавлять авто-булаву одновременно,
+   // и один из них не должен сбрасывать подавление за остальных.
+   private static int suppressionDepth = 0;
 
    private MaceSwapState() {
    }
@@ -33,7 +35,7 @@ public final class MaceSwapState {
    }
 
    public static boolean onInterceptAttack(MinecraftClient client, ClientPlayerEntity attacker, Entity target) {
-      if (automationSuppressed || performingFollowUp || client == null || attacker == null || target == null) {
+      if (suppressionDepth > 0 || performingFollowUp || client == null || attacker == null || target == null) {
          return false;
       }
 
@@ -195,10 +197,15 @@ public final class MaceSwapState {
       }
    }
 
-   static void setAutomationSuppressed(boolean suppressed) {
-      automationSuppressed = suppressed;
-      if (suppressed) {
-         clearQueuedSwordSwap();
+   /** Включает подавление авто-булавы. Каждый acquireSuppression() обязан быть закрыт ровно одним releaseSuppression(). */
+   static void acquireSuppression() {
+      ++suppressionDepth;
+      clearQueuedSwordSwap();
+   }
+
+   static void releaseSuppression() {
+      if (suppressionDepth > 0) {
+         --suppressionDepth;
       }
    }
 
@@ -214,12 +221,19 @@ public final class MaceSwapState {
    }
 
    static int findPreferredMaceInHotbar(ClientPlayerEntity player, boolean preferDensity) {
-      RegistryEntry<Enchantment> density = player.getRegistryManager()
-         .getOrThrow(RegistryKeys.ENCHANTMENT)
-         .getOrThrow(Enchantments.DENSITY);
-      RegistryEntry<Enchantment> breach = player.getRegistryManager()
-         .getOrThrow(RegistryKeys.ENCHANTMENT)
-         .getOrThrow(Enchantments.BREACH);
+      RegistryEntry<Enchantment> density;
+      RegistryEntry<Enchantment> breach;
+      try {
+         density = player.getRegistryManager()
+            .getOrThrow(RegistryKeys.ENCHANTMENT)
+            .getOrThrow(Enchantments.DENSITY);
+         breach = player.getRegistryManager()
+            .getOrThrow(RegistryKeys.ENCHANTMENT)
+            .getOrThrow(Enchantments.BREACH);
+      } catch (RuntimeException exception) {
+         // На серверах, где этих чар нет в реестре, берём первую булаву в хотбаре.
+         return findFirstMaceInHotbar(player);
+      }
 
       int fallbackSlot = -1;
       int bestPrimarySlot = -1;
@@ -260,6 +274,16 @@ public final class MaceSwapState {
       }
 
       return fallbackSlot;
+   }
+
+   private static int findFirstMaceInHotbar(ClientPlayerEntity player) {
+      for (int slot = 0; slot < 9; ++slot) {
+         if (player.getInventory().getStack(slot).isOf(Items.MACE)) {
+            return slot;
+         }
+      }
+
+      return -1;
    }
 
    static int findFirstHotbarSlot(ClientPlayerEntity player, net.minecraft.registry.tag.TagKey<net.minecraft.item.Item> tag) {

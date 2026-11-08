@@ -16,6 +16,10 @@ final class MultitoolsSettings {
    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
    private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("multitools.json");
 
+   // Старый дефолт кулдауна фейерверка в дайве; такие конфиги мигрируют на новый дефолт.
+   private static final int LEGACY_DIVE_FIREWORK_REUSE_TICKS = 4;
+   private static final int DEFAULT_DIVE_FIREWORK_REUSE_TICKS = 10;
+
    static boolean spearDashEnabled = true;
    static boolean pearlCatchEnabled = true;
    static boolean smartAttackEnabled = true;
@@ -41,7 +45,7 @@ final class MultitoolsSettings {
    static int supportPotionReuseTicks = 1;
    static int diveTargetRefreshTicks = 10;
    static int diveVectorRefreshTicks = 3;
-   static int diveFireworkReuseTicks = 4;
+   static int diveFireworkReuseTicks = DEFAULT_DIVE_FIREWORK_REUSE_TICKS;
    static int diveLaunchRecoveryTicks = 6;
    static int divePostStrikeRecoveryTicks = 8;
    static int diveGroundRelaunchDelayTicks = 2;
@@ -102,7 +106,9 @@ final class MultitoolsSettings {
          supportPotionReuseTicks = data.supportPotionReuseTicks;
          diveTargetRefreshTicks = data.diveTargetRefreshTicks;
          diveVectorRefreshTicks = data.diveVectorRefreshTicks;
-         diveFireworkReuseTicks = data.diveFireworkReuseTicks;
+         diveFireworkReuseTicks = data.diveFireworkReuseTicks == LEGACY_DIVE_FIREWORK_REUSE_TICKS
+            ? DEFAULT_DIVE_FIREWORK_REUSE_TICKS
+            : data.diveFireworkReuseTicks;
          diveLaunchRecoveryTicks = data.diveLaunchRecoveryTicks;
          divePostStrikeRecoveryTicks = data.divePostStrikeRecoveryTicks;
          diveGroundRelaunchDelayTicks = data.diveGroundRelaunchDelayTicks;
@@ -196,7 +202,7 @@ final class MultitoolsSettings {
       apply(ModKeyBindings.TOGGLE_ELYTRA_SWAP, toggleElytraSwapKey);
       apply(ModKeyBindings.AUTO_TOTEM, autoTotemKey);
       apply(ModKeyBindings.LOAD_MAIN, loadMainKey);
-      apply(ModKeyBindings.SETTINGS, railgunKey);
+      apply(ModKeyBindings.GIVE_RAILGUN, railgunKey);
       apply(ModKeyBindings.GIVE_NUKE, nukeKey);
       apply(ModKeyBindings.GIVE_STAB, stabKey);
       apply(ModKeyBindings.SELF_BUFFS, selfBuffsKey);
@@ -216,7 +222,7 @@ final class MultitoolsSettings {
       toggleElytraSwapKey = ModKeyBindings.TOGGLE_ELYTRA_SWAP.getBoundKeyTranslationKey();
       autoTotemKey = ModKeyBindings.AUTO_TOTEM.getBoundKeyTranslationKey();
       loadMainKey = ModKeyBindings.LOAD_MAIN.getBoundKeyTranslationKey();
-      railgunKey = ModKeyBindings.SETTINGS.getBoundKeyTranslationKey();
+      railgunKey = ModKeyBindings.GIVE_RAILGUN.getBoundKeyTranslationKey();
       nukeKey = ModKeyBindings.GIVE_NUKE.getBoundKeyTranslationKey();
       stabKey = ModKeyBindings.GIVE_STAB.getBoundKeyTranslationKey();
       selfBuffsKey = ModKeyBindings.SELF_BUFFS.getBoundKeyTranslationKey();
@@ -250,7 +256,7 @@ final class MultitoolsSettings {
       supportPotionReuseTicks = 1;
       diveTargetRefreshTicks = 10;
       diveVectorRefreshTicks = 3;
-      diveFireworkReuseTicks = 4;
+      diveFireworkReuseTicks = DEFAULT_DIVE_FIREWORK_REUSE_TICKS;
       diveLaunchRecoveryTicks = 6;
       divePostStrikeRecoveryTicks = 8;
       diveGroundRelaunchDelayTicks = 2;
@@ -307,7 +313,7 @@ final class MultitoolsSettings {
       int supportPotionReuseTicks = 1;
       int diveTargetRefreshTicks = 10;
       int diveVectorRefreshTicks = 3;
-      int diveFireworkReuseTicks = 4;
+      int diveFireworkReuseTicks = DEFAULT_DIVE_FIREWORK_REUSE_TICKS;
       int diveLaunchRecoveryTicks = 6;
       int divePostStrikeRecoveryTicks = 8;
       int diveGroundRelaunchDelayTicks = 2;

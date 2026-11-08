@@ -367,7 +367,7 @@ final class MultitoolsSettingsScreen extends Screen {
       this.featureEntries.add(new FeatureEntry("Elytra Swap State", "Current runtime state of auto elytra swap", () -> MultitoolsSettings.elytraSwapEnabled, value -> MultitoolsSettings.elytraSwapEnabled = value, ModKeyBindings.TOGGLE_ELYTRA_SWAP));
       this.featureEntries.add(new FeatureEntry("Auto Totem", "Move totem into offhand", () -> MultitoolsSettings.autoTotemEnabled, value -> MultitoolsSettings.autoTotemEnabled = value, ModKeyBindings.AUTO_TOTEM));
       this.featureEntries.add(new FeatureEntry("Load Main", "Run ck load main", () -> MultitoolsSettings.loadMainEnabled, value -> MultitoolsSettings.loadMainEnabled = value, ModKeyBindings.LOAD_MAIN));
-      this.featureEntries.add(new FeatureEntry("Railgun", "Run givef railgun straight 1", () -> MultitoolsSettings.railgunEnabled, value -> MultitoolsSettings.railgunEnabled = value, ModKeyBindings.SETTINGS));
+      this.featureEntries.add(new FeatureEntry("Railgun", "Run givef railgun straight 1", () -> MultitoolsSettings.railgunEnabled, value -> MultitoolsSettings.railgunEnabled = value, ModKeyBindings.GIVE_RAILGUN));
       this.featureEntries.add(new FeatureEntry("Give Nuke", "Run givef nuke 1 11", () -> MultitoolsSettings.nukeEnabled, value -> MultitoolsSettings.nukeEnabled = value, ModKeyBindings.GIVE_NUKE));
       this.featureEntries.add(new FeatureEntry("Give Stab", "Run givef stab 1", () -> MultitoolsSettings.stabEnabled, value -> MultitoolsSettings.stabEnabled = value, ModKeyBindings.GIVE_STAB));
       this.featureEntries.add(new FeatureEntry("Self Buffs", "Use splash potions under player", () -> MultitoolsSettings.selfBuffsEnabled, value -> MultitoolsSettings.selfBuffsEnabled = value, ModKeyBindings.SELF_BUFFS));

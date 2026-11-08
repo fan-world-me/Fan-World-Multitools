@@ -18,22 +18,34 @@ import net.minecraft.world.RaycastContext;
 
 final class DiveComboState {
    private static final double TARGET_RANGE = 30.0D;
-   private static final double BOOST_TO_DIVE_RANGE = 15.0D;
+   // С какого расстояния (между сущностями) снимаем элитры и падаем на цель. Меньше = меньше времени, чтобы цель ушла.
+   private static final double BOOST_TO_DIVE_RANGE = 11.0D;
    private static final double MIN_DIVE_HEIGHT_ABOVE_TARGET = 6.0D;
-   private static final double STRIKE_RANGE_MIN = 4.8D;
-   private static final double STRIKE_RANGE_MAX = 6.2D;
-   private static final double STRIKE_ALIGNMENT_MIN = 0.93D;
-   private static final double STRIKE_MAX_LATERAL_OFFSET = 1.75D;
-   private static final double STRIKE_MIN_CLOSING_SPEED = 0.12D;
+   // Бьём, как только расстояние от глаз до хитбокса цели <= этого значения. Подгони под reach своего сервера.
+   private static final double STRIKE_REACH = 3.8D;
+   private static final int MAX_DIVE_TICKS = 80;
    private static final double OBSTACLE_LOOKAHEAD = 5.0D;
    private static final double SAFETY_ASCENT_HEIGHT = 7.0D;
    private static final double SELF_WIND_BURST_DELTA_Y = 0.42D;
    private static final double TARGET_FALLING_THRESHOLD = -0.08D;
    private static final double TARGET_RISING_THRESHOLD = 0.18D;
    private static final int RETARGET_AFTER_FAILED_DIVES = 2;
+   // Бонус текущей цели в оценке: не даёт прицелу прыгать между целями каждые N тиков.
+   private static final double TARGET_STICKY_BONUS = 400.0D;
    private static final float SELF_BOOST_PITCH = 88.0F;
    private static final float REBOOST_PITCH = -80.0F;
    private static final float ASCENT_PITCH = -68.0F;
+   // Максимальный поворот камеры за тик (плавный прицел вместо резкого setYaw/setPitch).
+   private static final float MAX_YAW_STEP = 28.0F;
+   private static final float MAX_PITCH_STEP = 22.0F;
+   // Лимит ракет на один заход; сбрасывается после успешного удара и при новом старте с земли.
+   private static final int MAX_FIREWORKS_PER_APPROACH = 5;
+   // Выше этой скорости (блоков/тик, в квадрате) ракету не используем.
+   private static final double MAX_FIREWORK_SPEED_SQ = 2.8D;
+   // Ракету подаём, только если смотрим на цель в этом конусе (cos угла).
+   private static final double FIREWORK_MIN_ALIGNMENT = 0.8D;
+   // При наборе высоты ракета имеет смысл, только если смотрим достаточно вверх.
+   private static final float ASCENT_FIREWORK_MAX_PITCH = -35.0F;
 
    private final MultitoolsClient clientHooks;
 
@@ -41,13 +53,14 @@ final class DiveComboState {
    private int previousSelectedSlot = -1;
    private int targetEntityId = -1;
    private int targetRefreshTicks = 0;
-   private int vectorRefreshTicks = 0;
    private int fireworkCooldown = 0;
+   private int fireworksThisApproach = 0;
    private int phaseTicks = 0;
+   private int diveTicks = 0;
    private int failedDiveAttempts = 0;
    private double ascentTargetY = Double.NaN;
    private double lastVelocityY = 0.0D;
-   private boolean preserveChestplateDuringDive = false;
+   private boolean holdsSuppression = false;
    private boolean active = false;
 
    DiveComboState(MultitoolsClient clientHooks) {
@@ -67,9 +80,6 @@ final class DiveComboState {
 
       this.stop(client, true);
       this.start(player);
-      if (player.isGliding()) {
-         this.preserveChestplateDuringDive = this.clientHooks.equipChestplateFromInventory(client);
-      }
       this.active = true;
    }
 
@@ -119,10 +129,6 @@ final class DiveComboState {
          --this.targetRefreshTicks;
       }
 
-      if (this.vectorRefreshTicks > 0) {
-         --this.vectorRefreshTicks;
-      }
-
       if (this.fireworkCooldown > 0) {
          --this.fireworkCooldown;
       }
@@ -137,18 +143,25 @@ final class DiveComboState {
       this.previousSelectedSlot = player.getInventory().getSelectedSlot();
       this.targetEntityId = -1;
       this.targetRefreshTicks = 0;
-      this.vectorRefreshTicks = 0;
       this.fireworkCooldown = 0;
+      this.fireworksThisApproach = 0;
       this.phaseTicks = 0;
+      this.diveTicks = 0;
       this.failedDiveAttempts = 0;
       this.ascentTargetY = Double.NaN;
       this.lastVelocityY = player.getVelocity().y;
-      this.preserveChestplateDuringDive = false;
-      MaceSwapState.setAutomationSuppressed(true);
+      if (!this.holdsSuppression) {
+         MaceSwapState.acquireSuppression();
+         this.holdsSuppression = true;
+      }
    }
 
    private void stop(MinecraftClient client, boolean restoreSlot) {
-      MaceSwapState.setAutomationSuppressed(false);
+      if (this.holdsSuppression) {
+         MaceSwapState.releaseSuppression();
+         this.holdsSuppression = false;
+      }
+
       if (restoreSlot && client.player != null && this.previousSelectedSlot >= 0) {
          MaceSwapState.setSelectedHotbarSlot(client, client.player, this.previousSelectedSlot);
       }
@@ -157,13 +170,13 @@ final class DiveComboState {
       this.active = false;
       this.targetEntityId = -1;
       this.targetRefreshTicks = 0;
-      this.vectorRefreshTicks = 0;
       this.fireworkCooldown = 0;
+      this.fireworksThisApproach = 0;
       this.phaseTicks = 0;
+      this.diveTicks = 0;
       this.failedDiveAttempts = 0;
       this.ascentTargetY = Double.NaN;
       this.previousSelectedSlot = -1;
-      this.preserveChestplateDuringDive = false;
    }
 
    private void tickSearching(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
@@ -182,7 +195,6 @@ final class DiveComboState {
       }
 
       this.phase = Phase.BOOSTING;
-      this.vectorRefreshTicks = 0;
    }
 
    private void tickLaunching(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
@@ -204,7 +216,6 @@ final class DiveComboState {
       }
 
       this.phase = Phase.BOOSTING;
-      this.vectorRefreshTicks = 0;
    }
 
    private void tickBoosting(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
@@ -223,23 +234,25 @@ final class DiveComboState {
       }
 
       this.prepareForFlight(client, player);
-      if (this.vectorRefreshTicks <= 0) {
-         this.vectorRefreshTicks = MultitoolsSettings.diveVectorRefreshTicks;
-         this.faceForApproach(player, target);
+
+      boolean close = player.squaredDistanceTo(target) <= BOOST_TO_DIVE_RANGE * BOOST_TO_DIVE_RANGE;
+      if (close && player.getY() <= target.getY() + MIN_DIVE_HEIGHT_ABOVE_TARGET) {
+         // Рядом, но ниже цели: сначала набираем высоту.
+         this.facePosition(player, new Vec3d(target.getX(), target.getY() + MIN_DIVE_HEIGHT_ABOVE_TARGET + 2.0D, target.getZ()), ASCENT_PITCH);
+         this.tryUseAscentFirework(client, player);
+         return;
       }
 
-      this.tryUseFirework(client, player, target);
-      if (player.squaredDistanceTo(target) <= BOOST_TO_DIVE_RANGE * BOOST_TO_DIVE_RANGE) {
-         if (player.getY() <= target.getY() + MIN_DIVE_HEIGHT_ABOVE_TARGET) {
-            this.facePosition(player, new Vec3d(target.getX(), target.getY() + MIN_DIVE_HEIGHT_ABOVE_TARGET + 2.0D, target.getZ()), ASCENT_PITCH);
-            this.tryUseFirework(client, player, target);
-            return;
-         }
-
+      if (close) {
          this.clientHooks.equipChestplateOnLanding(client);
          this.phase = Phase.PREPARE_DIVE;
          this.phaseTicks = 1;
+         this.diveTicks = 0;
+         return;
       }
+
+      this.faceForApproach(player, target);
+      this.tryUseFirework(client, player, target);
    }
 
    private void tickPrepareDive(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
@@ -260,7 +273,7 @@ final class DiveComboState {
       }
 
       this.phase = Phase.DIVING;
-      this.vectorRefreshTicks = 0;
+      this.diveTicks = 0;
    }
 
    private void tickDiving(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
@@ -275,19 +288,25 @@ final class DiveComboState {
          return;
       }
 
-      if (this.vectorRefreshTicks <= 0) {
-         this.vectorRefreshTicks = MultitoolsSettings.diveVectorRefreshTicks;
-         this.faceForStrike(player, target);
-      }
-
-      double distance = Math.sqrt(player.squaredDistanceTo(target));
-      if (distance < STRIKE_RANGE_MIN) {
+      ++this.diveTicks;
+      if (this.diveTicks > MAX_DIVE_TICKS) {
          this.recoverToBoosting(client, player, true);
          return;
       }
 
-      if (this.canStrikeNow(player, target, distance)) {
+      this.faceForStrike(player, target);
+
+      // Бьём, как только цель в пределах reach — на любой скорости. Раньше окно было 4.8–6.2 блока,
+      // и на скорости пикирования его перепрыгивали за один тик (или улетали мимо со счётом "промах").
+      double reach = this.distanceToHitbox(player, target);
+      if (this.canStrikeNow(player, target, reach)) {
          this.phase = Phase.STRIKE;
+         this.tickStrike(client, player, target);
+         return;
+      }
+
+      if (this.hasMissedTarget(player, target, reach)) {
+         this.recoverToBoosting(client, player, true);
       }
    }
 
@@ -305,7 +324,6 @@ final class DiveComboState {
 
       if (target.hurtTime > 0 || player.getAttackCooldownProgress(0.0F) < 0.92F || player.getVelocity().y >= -0.05D || player.fallDistance <= 3.0F) {
          this.phase = Phase.DIVING;
-         this.vectorRefreshTicks = 0;
          return;
       }
 
@@ -316,7 +334,7 @@ final class DiveComboState {
       }
 
       this.failedDiveAttempts = 0;
-      this.preserveChestplateDuringDive = false;
+      this.fireworksThisApproach = 0;
       this.phase = Phase.POST_STRIKE;
       this.phaseTicks = MultitoolsSettings.divePostStrikeRecoveryTicks;
       this.clientHooks.equipElytraFromHotbar(client);
@@ -344,7 +362,6 @@ final class DiveComboState {
       this.prepareForFlight(client, player);
       if (player.getVelocity().y - this.lastVelocityY >= SELF_WIND_BURST_DELTA_Y) {
          this.phase = Phase.BOOSTING;
-         this.vectorRefreshTicks = 0;
          return;
       }
 
@@ -355,7 +372,6 @@ final class DiveComboState {
 
       if (this.phaseTicks <= 0) {
          this.phase = Phase.BOOSTING;
-         this.vectorRefreshTicks = 0;
       }
    }
 
@@ -379,15 +395,10 @@ final class DiveComboState {
       this.prepareForFlight(client, player);
       if (target.isOnGround() || target.getVelocity().y <= TARGET_FALLING_THRESHOLD) {
          this.phase = Phase.BOOSTING;
-         this.vectorRefreshTicks = 0;
       }
    }
 
    private void prepareForFlight(MinecraftClient client, ClientPlayerEntity player) {
-      if (this.preserveChestplateDuringDive) {
-         return;
-      }
-
       if (!player.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA) && this.clientHooks.canAutoEquipElytra(player)) {
          this.clientHooks.equipElytraFromHotbar(client);
       }
@@ -395,19 +406,54 @@ final class DiveComboState {
       this.clientHooks.startFallFlyingIfPossible(player);
    }
 
+   private boolean canUseFirework(ClientPlayerEntity player) {
+      return player.isGliding()
+         && this.fireworkCooldown <= 0
+         && this.fireworksThisApproach < MAX_FIREWORKS_PER_APPROACH;
+   }
+
+   private void fireRocket(MinecraftClient client) {
+      this.clientHooks.useFirework(client);
+      this.fireworkCooldown = Math.max(1, MultitoolsSettings.diveFireworkReuseTicks);
+      ++this.fireworksThisApproach;
+   }
+
+   /** Ракета при подлёте к цели: только если уже не слишком быстро и мы смотрим на цель. */
    private void tryUseFirework(MinecraftClient client, ClientPlayerEntity player, LivingEntity target) {
-      if (!player.isGliding() || this.fireworkCooldown > 0) {
+      if (!this.canUseFirework(player)) {
+         return;
+      }
+
+      Vec3d velocity = player.getVelocity();
+      if (velocity.lengthSquared() > MAX_FIREWORK_SPEED_SQ) {
          return;
       }
 
       double distanceSq = player.squaredDistanceTo(target);
-      double horizontalSpeedSq = player.getVelocity().horizontalLengthSquared();
-      if (horizontalSpeedSq > 1.8D && distanceSq < 256.0D && player.getVelocity().y > -0.22D) {
+      if (velocity.horizontalLengthSquared() > 1.8D && distanceSq < 256.0D && velocity.y > -0.22D) {
          return;
       }
 
-      this.clientHooks.useFirework(client);
-      this.fireworkCooldown = MultitoolsSettings.diveFireworkReuseTicks;
+      Vec3d toTarget = target.getBoundingBox().getCenter().subtract(player.getEyePos());
+      double length = toTarget.length();
+      if (length > 1.0E-6D && player.getRotationVec(1.0F).dotProduct(toTarget.multiply(1.0D / length)) < FIREWORK_MIN_ALIGNMENT) {
+         return;
+      }
+
+      this.fireRocket(client);
+   }
+
+   /** Ракета при наборе высоты над целью: цель не по курсу, поэтому смотрим только на то, что мы летим вверх. */
+   private void tryUseAscentFirework(MinecraftClient client, ClientPlayerEntity player) {
+      if (!this.canUseFirework(player)) {
+         return;
+      }
+
+      if (player.getVelocity().lengthSquared() > MAX_FIREWORK_SPEED_SQ || player.getPitch() > ASCENT_FIREWORK_MAX_PITCH) {
+         return;
+      }
+
+      this.fireRocket(client);
    }
 
    private void tryImmediateReboost(MinecraftClient client, ClientPlayerEntity player) {
@@ -415,10 +461,10 @@ final class DiveComboState {
          return;
       }
 
-      this.facePosition(player, player.getEyePos().add(0.0D, 12.0D, 0.0D), REBOOST_PITCH);
-      if (player.isGliding() && this.fireworkCooldown <= 0) {
-         this.clientHooks.useFirework(client);
-         this.fireworkCooldown = MultitoolsSettings.diveFireworkReuseTicks;
+      // Здесь разворот мгновенный: ракета летит по текущему взгляду, а после удара он направлен вниз.
+      this.snapFacePosition(player, player.getEyePos().add(0.0D, 12.0D, 0.0D), REBOOST_PITCH);
+      if (this.canUseFirework(player)) {
+         this.fireRocket(client);
       }
    }
 
@@ -432,10 +478,10 @@ final class DiveComboState {
          }
       }
 
+      this.diveTicks = 0;
       this.clientHooks.equipElytraFromHotbar(client);
       this.clientHooks.startFallFlyingIfPossible(player);
       this.phase = player.isOnGround() ? Phase.SEARCHING : Phase.BOOSTING;
-      this.vectorRefreshTicks = 0;
    }
 
    private void faceForApproach(ClientPlayerEntity player, LivingEntity target) {
@@ -457,15 +503,31 @@ final class DiveComboState {
       this.facePosition(player, this.getPredictedStrikePos(target), null);
    }
 
+   /** Плавный поворот к точке: не больше MAX_YAW_STEP / MAX_PITCH_STEP градусов за тик. */
    private void facePosition(ClientPlayerEntity player, Vec3d targetPos, Float fixedPitch) {
+      this.aimAt(player, targetPos, fixedPitch, MAX_YAW_STEP, MAX_PITCH_STEP);
+   }
+
+   /** Мгновенный поворот (нужен только там, где сразу после поворота используется предмет). */
+   private void snapFacePosition(ClientPlayerEntity player, Vec3d targetPos, Float fixedPitch) {
+      this.aimAt(player, targetPos, fixedPitch, 360.0F, 180.0F);
+   }
+
+   private void aimAt(ClientPlayerEntity player, Vec3d targetPos, Float fixedPitch, float maxYawStep, float maxPitchStep) {
       Vec3d delta = targetPos.subtract(player.getEyePos());
       double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
-      float yaw = (float)(Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0D);
-      float pitch = fixedPitch != null
+      float desiredYaw = horizontal > 1.0E-4D
+         ? (float)(Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0D)
+         : player.getYaw();
+      float desiredPitch = fixedPitch != null
          ? fixedPitch
          : (float)(-Math.toDegrees(Math.atan2(delta.y, horizontal)));
-      player.setYaw(yaw);
-      player.setPitch(MathHelper.clamp(pitch, -90.0F, 90.0F));
+      desiredPitch = MathHelper.clamp(desiredPitch, -90.0F, 90.0F);
+
+      float yawDelta = MathHelper.wrapDegrees(desiredYaw - player.getYaw());
+      float pitchDelta = desiredPitch - player.getPitch();
+      player.setYaw(player.getYaw() + MathHelper.clamp(yawDelta, -maxYawStep, maxYawStep));
+      player.setPitch(MathHelper.clamp(player.getPitch() + MathHelper.clamp(pitchDelta, -maxPitchStep, maxPitchStep), -90.0F, 90.0F));
    }
 
    private boolean hasObstacleAhead(ClientPlayerEntity player, LivingEntity target) {
@@ -522,6 +584,7 @@ final class DiveComboState {
          return false;
       }
 
+      this.fireworksThisApproach = 0;
       this.phase = Phase.LAUNCHING;
       this.phaseTicks = MultitoolsSettings.diveLaunchRecoveryTicks;
       return true;
@@ -537,6 +600,7 @@ final class DiveComboState {
       Box searchBox = player.getBoundingBox().expand(TARGET_RANGE, TARGET_RANGE, TARGET_RANGE);
       LivingEntity bestTarget = null;
       double bestScore = Double.MAX_VALUE;
+      int previousTargetId = this.targetEntityId;
 
       for (Entity entity : client.world.getOtherEntities(player, searchBox, candidate -> canTrackTarget(player, candidate))) {
          if (!(entity instanceof LivingEntity living)) {
@@ -552,7 +616,11 @@ final class DiveComboState {
 
       this.targetEntityId = bestTarget == null ? -1 : bestTarget.getId();
       this.targetRefreshTicks = MultitoolsSettings.diveTargetRefreshTicks;
-      this.failedDiveAttempts = 0;
+      // Счётчик промахов сбрасываем только при реальной смене цели: раньше он обнулялся на каждом
+      // переоценивании, и "смена цели после 2 промахов" не срабатывала.
+      if (this.targetEntityId != previousTargetId) {
+         this.failedDiveAttempts = 0;
+      }
       return bestTarget;
    }
 
@@ -566,6 +634,10 @@ final class DiveComboState {
 
       if (this.isTargetAirborne(target)) {
          score -= 50.0D;
+      }
+
+      if (target.getId() == this.targetEntityId) {
+         score -= TARGET_STICKY_BONUS;
       }
 
       return score;
@@ -593,39 +665,37 @@ final class DiveComboState {
       return deltaX <= TARGET_RANGE && deltaY <= TARGET_RANGE && deltaZ <= TARGET_RANGE;
    }
 
-   private boolean canStrikeNow(ClientPlayerEntity player, LivingEntity target, double distance) {
-      if (distance > STRIKE_RANGE_MAX || distance < STRIKE_RANGE_MIN) {
+   /** Расстояние от глаз игрока до ближайшей точки хитбокса цели (то, что проверяет сервер при ударе). */
+   private double distanceToHitbox(ClientPlayerEntity player, LivingEntity target) {
+      Box box = target.getBoundingBox();
+      Vec3d eye = player.getEyePos();
+      double dx = eye.x - MathHelper.clamp(eye.x, box.minX, box.maxX);
+      double dy = eye.y - MathHelper.clamp(eye.y, box.minY, box.maxY);
+      double dz = eye.z - MathHelper.clamp(eye.z, box.minZ, box.maxZ);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+   }
+
+   private boolean canStrikeNow(ClientPlayerEntity player, LivingEntity target, double reach) {
+      if (reach > STRIKE_REACH) {
          return false;
       }
 
-      if (player.getVelocity().y >= -0.08D || player.fallDistance <= 3.0F || player.getY() <= target.getY() + 2.5D) {
+      return player.getVelocity().y < -0.08D && player.fallDistance > 3.0F && player.getY() > target.getY() + 1.0D;
+   }
+
+   /** Цель упущена: мы уже ниже неё или явно удаляемся от неё, при этом достать не можем. */
+   private boolean hasMissedTarget(ClientPlayerEntity player, LivingEntity target, double reach) {
+      if (reach <= STRIKE_REACH) {
          return false;
       }
 
-      Vec3d eyePos = player.getEyePos();
-      Vec3d predictedTarget = this.getPredictedStrikePos(target);
-      Vec3d toTarget = predictedTarget.subtract(eyePos);
-      double targetDistance = toTarget.length();
-      if (targetDistance < 1.0E-6D) {
-         return false;
+      if (player.getY() < target.getY() - 0.5D) {
+         return true;
       }
 
-      Vec3d look = player.getRotationVec(1.0F).normalize();
-      Vec3d direction = toTarget.multiply(1.0D / targetDistance);
-      double alignment = look.dotProduct(direction);
-      if (alignment < STRIKE_ALIGNMENT_MIN) {
-         return false;
-      }
-
-      double forward = toTarget.dotProduct(look);
-      double lateralSq = Math.max(0.0D, toTarget.lengthSquared() - forward * forward);
-      if (lateralSq > STRIKE_MAX_LATERAL_OFFSET * STRIKE_MAX_LATERAL_OFFSET) {
-         return false;
-      }
-
-      Vec3d relativeVelocity = player.getVelocity().subtract(target.getVelocity());
-      double closingSpeed = relativeVelocity.dotProduct(direction);
-      return closingSpeed >= STRIKE_MIN_CLOSING_SPEED;
+      Vec3d toTarget = target.getBoundingBox().getCenter().subtract(player.getEyePos());
+      boolean movingAway = player.getVelocity().dotProduct(toTarget) <= 0.0D;
+      return movingAway && reach > STRIKE_REACH * 2.5D;
    }
 
    private double computePredictionTicks(ClientPlayerEntity player, LivingEntity target, double minTicks, double maxTicks) {

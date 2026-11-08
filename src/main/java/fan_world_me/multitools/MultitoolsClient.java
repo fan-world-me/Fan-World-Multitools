@@ -80,6 +80,15 @@ public class MultitoolsClient implements ClientModInitializer {
    private static final int TEMP_FLUID_LAVA_TICKS = 2;
    private static final float STRAIGHT_DOWN_PITCH = 90.0F;
 
+   // WebTrap: дальше этого расстояния цель не ищем
+   private static final double WEB_TRAP_TARGET_RANGE = 6.5D;
+   // WebTrap: удар мечом имеет смысл только в пределах ванильного reach
+   private static final double WEB_TRAP_ATTACK_REACH = 3.0D;
+   // WebTrap: макс. расстояние от глаз до грани блока, по которой кликаем (ванильный reach на блоки ~4.5)
+   private static final double WEB_TRAP_PLACE_REACH = 4.4D;
+   // WebTrap: на сколько блоков "за врагом" (считая от игрока) пробуем ставить паутину; от дальнего к ближнему
+   private static final double[] WEB_TRAP_BEHIND_OFFSETS = {2.0D, 1.5D, 1.0D, 0.5D, 0.0D};
+
    private final DiveComboState diveComboState = new DiveComboState(this);
    private final ArrayDeque<Integer> pendingSupportPotionSlots = new ArrayDeque<>();
 
@@ -126,7 +135,7 @@ public class MultitoolsClient implements ClientModInitializer {
       ModKeyBindings.getToggleElytraSwap();
       ModKeyBindings.getAutoTotem();
       ModKeyBindings.getLoadMain();
-      ModKeyBindings.getSettings();
+      ModKeyBindings.getGiveRailgun();
       ModKeyBindings.getGiveNuke();
       ModKeyBindings.getGiveStab();
       ModKeyBindings.getSelfBuffs();
@@ -194,8 +203,8 @@ public class MultitoolsClient implements ClientModInitializer {
             }
          }
 
-      while (ModKeyBindings.getSettings().wasPressed()) {
-         if (MultitoolsSettings.railgunEnabled) {
+         while (ModKeyBindings.getGiveRailgun().wasPressed()) {
+            if (MultitoolsSettings.railgunEnabled) {
                this.queueGiveCommand(client, "givef railgun straight 1");
             }
          }
@@ -312,6 +321,14 @@ public class MultitoolsClient implements ClientModInitializer {
    }
 
    private void tickElytraThreatSwap(MinecraftClient client) {
+      // Тумблер Elytra Swap должен отключать и защитный свап от кристаллов/TNT/булавы.
+      if (!MultitoolsSettings.elytraSwapFeatureEnabled || !MultitoolsSettings.elytraSwapEnabled) {
+         this.elytraThreatHoldTicks = 0;
+         this.restoreElytraAfterThreat = false;
+         this.restoreGlideAfterThreat = false;
+         return;
+      }
+
       ClientPlayerEntity player = client.player;
       if (player == null || client.world == null || client.interactionManager == null) {
          this.elytraThreatHoldTicks = 0;
@@ -423,12 +440,12 @@ public class MultitoolsClient implements ClientModInitializer {
             continue;
          }
 
-         MaceSwapState.setAutomationSuppressed(true);
-          try {
-             this.simulateHit(client);
-          } finally {
-             MaceSwapState.setAutomationSuppressed(false);
-          }
+         MaceSwapState.acquireSuppression();
+         try {
+            this.simulateHit(client);
+         } finally {
+            MaceSwapState.releaseSuppression();
+         }
          this.spearSwapBackDelay = MultitoolsSettings.spearSwapBackDelayTicks;
          this.spearBindDelay = MultitoolsSettings.spearKeyCooldownTicks;
       }
@@ -482,10 +499,10 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       if (player.getVelocity().y > SMART_ATTACK_VERTICAL_SPEED) {
-          return;
-       }
+         return;
+      }
 
-       Entity target = this.findSmartAttackTarget(client);
+      Entity target = this.findSmartAttackTarget(client);
       if (!(target instanceof LivingEntity)) {
          return;
       }
@@ -590,13 +607,13 @@ public class MultitoolsClient implements ClientModInitializer {
 
       ++this.temporaryFluidTicks;
       if (this.temporaryFluidReturnRequested && this.temporaryFluidReturnTimeoutTicks > 0) {
-          --this.temporaryFluidReturnTimeoutTicks;
-       }
+         --this.temporaryFluidReturnTimeoutTicks;
+      }
 
-       if (this.temporaryFluidReturnRequested && this.temporaryFluidReturnTimeoutTicks <= 0) {
-          this.clearTemporaryFluid();
-          return;
-       }
+      if (this.temporaryFluidReturnRequested && this.temporaryFluidReturnTimeoutTicks <= 0) {
+         this.clearTemporaryFluid();
+         return;
+      }
 
       if (this.temporaryFluidPickupDelayTicks > 0) {
          --this.temporaryFluidPickupDelayTicks;
@@ -952,7 +969,9 @@ public class MultitoolsClient implements ClientModInitializer {
          return;
       }
 
-      int elytraSlot = this.findHotbarSlot(player, Items.ELYTRA);
+      // Ищем по всему инвентарю, а не только по хотбару: после свапа с нагрудником
+      // элитры могут лежать в основном инвентаре (там, где лежал нагрудник).
+      int elytraSlot = this.findInventorySlot(player, Items.ELYTRA);
       if (elytraSlot < 0) {
          return;
       }
@@ -1247,37 +1266,145 @@ public class MultitoolsClient implements ClientModInitializer {
       client.crosshairTarget = prevCrosshair;
    }
 
+   /**
+    * WebTrap: (по возможности) бьём врага мечом и ставим паутину "за ним" — на линии игрок -> враг,
+    * с другой стороны от игрока, куда его отбросит удар.
+    *
+    * Что исправлено относительно старой версии:
+    *  - место считается по горизонтальной линии игрок -> враг, а скорость врага учитывается только вдоль неё,
+    *    поэтому стрейф врага больше не сносит паутину вбок;
+    *  - если "за врагом" не достать или клетка занята, пробуем ближние клетки (2.0 -> 0.0) вместо молчаливого провала;
+    *  - клик идёт по настоящей грани соседнего блока в пределах reach, без поворота камеры;
+    *  - меч не обязателен: нет меча или враг дальше 3 блоков — просто ставим паутину;
+    *  - при ударе подавляется авто-булава (иначе удар мог уйти булавой, а не мечом).
+    */
    private boolean trySwordWebTrap(MinecraftClient client) {
       ClientPlayerEntity player = client.player;
-      if (player == null) {
+      if (player == null || client.world == null || client.interactionManager == null) {
          return false;
       }
 
-      LivingEntity target = this.findBestAttackTarget(client, 8.0D, 5.0D) instanceof LivingEntity living ? living : null;
+      int cobwebSlot = this.findInventorySlot(player, Items.COBWEB);
+      if (cobwebSlot < 0) {
+         return false;
+      }
+
+      LivingEntity target = this.findBestAttackTarget(client, WEB_TRAP_TARGET_RANGE, 4.0D) instanceof LivingEntity living ? living : null;
       if (target == null) {
          return false;
       }
 
+      // Всё считаем ДО удара: после него враг уже начнёт лететь.
+      final Vec3d away = this.computeAwayDirection(player, target);
+      final Vec3d targetPos = new Vec3d(target.getX(), target.getY(), target.getZ());
+      final Vec3d targetVelocity = target.getVelocity();
+
       int swordSlot = this.findInventorySlotByTag(player, ItemTags.SWORDS);
-      int cobwebSlot = this.findInventorySlot(player, Items.COBWEB);
-      if (swordSlot < 0 || cobwebSlot < 0) {
+      if (swordSlot >= 0 && this.distanceToHitbox(player, target) <= WEB_TRAP_ATTACK_REACH) {
+         MaceSwapState.acquireSuppression();
+         try {
+            this.attackEntityFromInventorySlot(client, player, swordSlot, target);
+         } finally {
+            MaceSwapState.releaseSuppression();
+         }
+      }
+
+      final boolean[] placed = {false};
+      this.runWithInventorySlotSelected(client, player, cobwebSlot, () -> {
+         placed[0] = this.placeCobwebBehind(client, player, targetPos, targetVelocity, away);
+      });
+
+      if (!placed[0]) {
+         player.sendMessage(Text.literal("Web Trap: no free spot in reach"), true);
+      }
+
+      return placed[0];
+   }
+
+   /** Горизонтальное направление от игрока к врагу (куда врага отбросит удар). */
+   private Vec3d computeAwayDirection(ClientPlayerEntity player, LivingEntity target) {
+      Vec3d away = new Vec3d(target.getX() - player.getX(), 0.0D, target.getZ() - player.getZ());
+      if (away.lengthSquared() < 1.0E-6D) {
+         Vec3d look = player.getRotationVec(1.0F);
+         away = new Vec3d(look.x, 0.0D, look.z);
+      }
+
+      if (away.lengthSquared() < 1.0E-6D) {
+         away = new Vec3d(0.0D, 0.0D, 1.0D);
+      }
+
+      return away.normalize();
+   }
+
+   private boolean placeCobwebBehind(MinecraftClient client, ClientPlayerEntity player, Vec3d targetPos, Vec3d targetVelocity, Vec3d away) {
+      // Скорость врага берём только вдоль линии "от игрока": боковое движение на место паутины не влияет.
+      double along = Math.max(0.0D, targetVelocity.x * away.x + targetVelocity.z * away.z);
+      double lead = Math.min(along * 2.0D, 1.5D);
+
+      // Сначала все варианты на уровне ног врага, потом на уровне головы.
+      for (int lift = 0; lift <= 1; ++lift) {
+         for (double offset : WEB_TRAP_BEHIND_OFFSETS) {
+            double distance = offset > 0.0D ? offset + lead : 0.0D;
+            BlockPos cell = BlockPos.ofFloored(
+               targetPos.x + away.x * distance,
+               targetPos.y + 0.1D,
+               targetPos.z + away.z * distance
+            ).up(lift);
+            if (this.tryPlaceCobwebAt(client, player, cell)) {
+               return true;
+            }
+         }
+      }
+
+      return false;
+   }
+
+   /** Ставит паутину в клетку pos, кликая по грани любого соседнего твёрдого блока в пределах reach. */
+   private boolean tryPlaceCobwebAt(MinecraftClient client, ClientPlayerEntity player, BlockPos pos) {
+      BlockPos playerPos = player.getBlockPos();
+      if (pos.equals(playerPos) || pos.equals(playerPos.up())) {
          return false;
       }
 
-      boolean attacked = this.attackEntityFromInventorySlot(client, player, swordSlot, target);
-      if (!attacked) {
+      BlockState state = client.world.getBlockState(pos);
+      if (!state.isAir() && !state.isReplaceable()) {
          return false;
       }
 
-      BlockPos placementPos = this.findEntityLandingPlacement(client, player, target, 16.0D, 2.5D);
-      if (placementPos == null || !this.canPlaceCobwebAt(client, placementPos)) {
-         return true;
+      Vec3d eye = player.getEyePos();
+      double reachSq = WEB_TRAP_PLACE_REACH * WEB_TRAP_PLACE_REACH;
+      Direction[] sides = new Direction[] {Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP};
+      for (Direction side : sides) {
+         BlockPos neighbor = pos.offset(side);
+         BlockState neighborState = client.world.getBlockState(neighbor);
+         if (neighborState.isAir() || neighborState.isReplaceable() || !neighborState.getFluidState().isEmpty()) {
+            continue;
+         }
+
+         Direction face = side.getOpposite();
+         Vec3d hitPos = Vec3d.ofCenter(neighbor).add(face.getOffsetX() * 0.5D, face.getOffsetY() * 0.5D, face.getOffsetZ() * 0.5D);
+         if (eye.squaredDistanceTo(hitPos) > reachSq) {
+            continue;
+         }
+
+         ActionResult result = client.interactionManager.interactBlock(player, Hand.MAIN_HAND, new BlockHitResult(hitPos, face, neighbor, false));
+         if (result.isAccepted()) {
+            player.swingHand(Hand.MAIN_HAND);
+            return true;
+         }
       }
 
-      if (!this.useInventoryItemOnBlock(client, player, cobwebSlot, placementPos.down(), Direction.UP, STRAIGHT_DOWN_PITCH)) {
-         this.useInventoryItemOnBlockFlexible(client, player, cobwebSlot, placementPos);
-      }
-      return true;
+      return false;
+   }
+
+   /** Расстояние от глаз игрока до ближайшей точки хитбокса цели. */
+   private double distanceToHitbox(ClientPlayerEntity player, Entity target) {
+      Box box = target.getBoundingBox();
+      Vec3d eye = player.getEyePos();
+      double dx = eye.x - MathHelper.clamp(eye.x, box.minX, box.maxX);
+      double dy = eye.y - MathHelper.clamp(eye.y, box.minY, box.maxY);
+      double dz = eye.z - MathHelper.clamp(eye.z, box.minZ, box.maxZ);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
    }
 
    private boolean shouldAttemptWaterDrop(ClientPlayerEntity player) {
@@ -1288,11 +1415,6 @@ public class MultitoolsClient implements ClientModInitializer {
       BlockPos feetPos = BlockPos.ofFloored(player.getX(), player.getBoundingBox().minY + 0.05D, player.getZ());
       BlockPos bodyPos = player.getBlockPos();
       return client.world.getBlockState(feetPos).isOf(Blocks.COBWEB) || client.world.getBlockState(bodyPos).isOf(Blocks.COBWEB);
-   }
-
-   private LivingEntity findPriorityTrapTarget(MinecraftClient client) {
-      Entity entity = this.findBestAttackTarget(client, SMART_ATTACK_RANGE, 3.5D);
-      return entity instanceof LivingEntity living ? living : null;
    }
 
    private BlockPos findSupportBlockBelowPlayer(ClientPlayerEntity player, double maxDistance) {
@@ -1306,30 +1428,6 @@ public class MultitoolsClient implements ClientModInitializer {
          player
       ));
       return hit.getType() == HitResult.Type.BLOCK ? hit.getBlockPos() : null;
-   }
-
-   private BlockPos findEntityLandingPlacement(MinecraftClient client, ClientPlayerEntity player, LivingEntity target, double maxDistance, double forwardOffset) {
-      Vec3d predictedBase = this.computeForwardTrapBase(player, target, forwardOffset);
-      BlockPos currentPos = BlockPos.ofFloored(predictedBase.x, target.getY(), predictedBase.z);
-      if (client.world.getBlockState(currentPos).isAir() && this.hasSolidSupport(client, currentPos.down())) {
-         return currentPos;
-      }
-
-      Vec3d start = new Vec3d(predictedBase.x, target.getY() + 0.2D, predictedBase.z);
-      Vec3d end = start.subtract(0.0D, maxDistance, 0.0D);
-      BlockHitResult hit = client.world.raycast(new RaycastContext(
-         start,
-         end,
-         RaycastContext.ShapeType.COLLIDER,
-         RaycastContext.FluidHandling.NONE,
-         target
-      ));
-      if (hit.getType() != HitResult.Type.BLOCK) {
-         return null;
-      }
-
-      BlockPos placementPos = hit.getBlockPos().up();
-      return client.world.getBlockState(placementPos).isAir() ? placementPos : null;
    }
 
    private BlockPos findBlockUnderTarget(MinecraftClient client, LivingEntity target, double maxDistance) {
@@ -1356,22 +1454,6 @@ public class MultitoolsClient implements ClientModInitializer {
       return client.world.getBlockState(placementPos).isAir() ? placementPos : null;
    }
 
-   private Vec3d computeForwardTrapBase(ClientPlayerEntity player, LivingEntity target, double forwardOffset) {
-      Vec3d away = new Vec3d(target.getX() - player.getX(), 0.0D, target.getZ() - player.getZ());
-      if (away.lengthSquared() < 1.0E-6D) {
-         away = player.getRotationVec(1.0F);
-         away = new Vec3d(away.x, 0.0D, away.z);
-      }
-
-      if (away.lengthSquared() < 1.0E-6D) {
-         away = new Vec3d(0.0D, 0.0D, 1.0D);
-      }
-
-      Vec3d horizontalAway = away.normalize().multiply(forwardOffset);
-      Vec3d targetVelocity = new Vec3d(target.getVelocity().x, 0.0D, target.getVelocity().z).multiply(3.0D);
-      return new Vec3d(target.getX(), target.getY(), target.getZ()).add(horizontalAway).add(targetVelocity);
-   }
-
    private boolean canUseTemporaryFluidAt(MinecraftClient client, BlockPos sourcePos, boolean requireCobweb) {
       BlockState state = client.world.getBlockState(sourcePos);
       if (requireCobweb) {
@@ -1379,10 +1461,6 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       return state.isAir() || state.isOf(Blocks.COBWEB) || !state.getFluidState().isEmpty();
-   }
-
-   private boolean canPlaceCobwebAt(MinecraftClient client, BlockPos placementPos) {
-      return client.world.getBlockState(placementPos).isAir() && this.hasSolidSupport(client, placementPos.down());
    }
 
    private boolean hasSolidSupport(MinecraftClient client, BlockPos supportPos) {
@@ -1491,100 +1569,6 @@ public class MultitoolsClient implements ClientModInitializer {
       return attacked[0];
    }
 
-   private boolean useInventoryItemOnBlock(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, BlockPos blockPos, Direction side, float pitch) {
-      if (client.interactionManager == null) {
-         return false;
-      }
-
-      final boolean[] used = {false};
-      if (!this.runWithInventorySlotSelected(client, player, inventorySlot, () -> {
-         float previousPitch = player.getPitch();
-         float previousYaw = player.getYaw();
-         Vec3d hitPos = Vec3d.ofCenter(blockPos).add(0.0D, side == Direction.UP ? 0.5D : 0.0D, 0.0D);
-         this.facePosition(player, hitPos, pitch);
-         ActionResult result = client.interactionManager.interactBlock(player, Hand.MAIN_HAND, new BlockHitResult(hitPos, side, blockPos, false));
-         if (result.isAccepted()) {
-            player.swingHand(Hand.MAIN_HAND);
-            used[0] = true;
-         }
-         player.setPitch(previousPitch);
-         player.setYaw(previousYaw);
-      })) {
-         return false;
-      }
-
-      return used[0];
-   }
-
-   private boolean useInventoryItemOnBlockFlexible(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, BlockPos blockPos) {
-      if (client.interactionManager == null) {
-         return false;
-      }
-
-      Direction[] directions = new Direction[] {Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.DOWN};
-      for (Direction side : directions) {
-         if (this.useInventoryItemOnBlock(client, player, inventorySlot, blockPos, side, STRAIGHT_DOWN_PITCH)) {
-            return true;
-         }
-      }
-
-      return false;
-   }
-
-   private boolean useInventoryItemOnBlockFlexibleConfirmed(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, BlockPos blockPos, Item expectedAfterItem) {
-      if (client.interactionManager == null) {
-         return false;
-      }
-
-      Direction[] directions = new Direction[] {Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.DOWN};
-      for (Direction side : directions) {
-         this.useInventoryItemOnBlock(client, player, inventorySlot, blockPos, side, STRAIGHT_DOWN_PITCH);
-         if (player.getInventory().getStack(inventorySlot).isOf(expectedAfterItem)) {
-            return true;
-         }
-      }
-
-      return player.getInventory().getStack(inventorySlot).isOf(expectedAfterItem);
-   }
-
-   private boolean useInventoryItemAtAngles(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, float pitch, float yaw) {
-      if (client.interactionManager == null) {
-         return false;
-      }
-
-      final boolean[] used = {false};
-      if (!this.runWithInventorySlotSelected(client, player, inventorySlot, () -> {
-         float previousPitch = player.getPitch();
-         float previousYaw = player.getYaw();
-         player.setYaw(yaw);
-         float clampedPitch = MathHelper.clamp(pitch, -90.0F, 90.0F);
-         player.setPitch(clampedPitch);
-         if (client.getNetworkHandler() != null) {
-            client.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(yaw, clampedPitch, player.isOnGround(), player.horizontalCollision));
-         }
-         ActionResult result = client.interactionManager.interactItem(player, Hand.MAIN_HAND);
-         if (result.isAccepted()) {
-            player.swingHand(Hand.MAIN_HAND);
-            used[0] = true;
-         }
-         player.setPitch(previousPitch);
-         player.setYaw(previousYaw);
-      })) {
-         return false;
-      }
-
-      return used[0];
-   }
-
-   private boolean useInventoryItemAtAnglesConfirmed(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, float pitch, float yaw, Item expectedAfterItem) {
-      if (client.interactionManager == null) {
-         return false;
-      }
-
-      this.useInventoryItemAtAngles(client, player, inventorySlot, pitch, yaw);
-      return player.getInventory().getStack(inventorySlot).isOf(expectedAfterItem);
-   }
-
    private boolean runWithInventorySlotSelected(MinecraftClient client, ClientPlayerEntity player, int inventorySlot, Runnable action) {
       if (inventorySlot < 0 || inventorySlot >= 36 || client.interactionManager == null) {
          return false;
@@ -1625,24 +1609,6 @@ public class MultitoolsClient implements ClientModInitializer {
       }
 
       return -1;
-   }
-
-   private void facePosition(ClientPlayerEntity player, Vec3d targetPos, float pitch) {
-      Vec3d delta = targetPos.subtract(player.getEyePos());
-      float yaw = this.computeYawTo(player.getEyePos(), targetPos);
-      player.setYaw(yaw);
-      player.setPitch(MathHelper.clamp(pitch, -90.0F, 90.0F));
-   }
-
-   private float computeYawTo(Vec3d source, Vec3d target) {
-      Vec3d delta = target.subtract(source);
-      return (float)(Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0D);
-   }
-
-   private float computePitchTo(Vec3d source, Vec3d target) {
-      Vec3d delta = target.subtract(source);
-      double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
-      return (float)(-Math.toDegrees(Math.atan2(delta.y, horizontal)));
    }
 
    private int findHotbarSlot(ClientPlayerEntity player, Item item) {
@@ -1838,15 +1804,8 @@ public class MultitoolsClient implements ClientModInitializer {
    }
 
    private boolean isValidSmartAttackTarget(Entity entity) {
-      if (!(entity instanceof LivingEntity)) {
-         return false;
-      }
-
-      if (!entity.isAlive()) {
-         return false;
-      }
-
-      return !(entity instanceof EndCrystalEntity) && !(entity instanceof ProjectileEntity);
+      // Любая живая сущность — намеренно (без фильтра по питомцам, армор-стендам и т.п.).
+      return entity instanceof LivingEntity && entity.isAlive();
    }
 
    private double squaredDistanceToTarget(Vec3d source, Entity entity) {
@@ -1908,4 +1867,3 @@ public class MultitoolsClient implements ClientModInitializer {
       COBWEB_WATER
    }
 }
-
