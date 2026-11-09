@@ -13,5 +13,6 @@ public class MultitoolsHelp implements ModInitializer {
         LOGGER.info("MultitoolsHelp loaded!");
         StrikeScheduler.init();
         GivefCommand.register();
+        PlayerJoinHandler.register();
     }
 }
